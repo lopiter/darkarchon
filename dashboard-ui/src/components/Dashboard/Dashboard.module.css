@@ -1,0 +1,15 @@
+.dashboard {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-host-gap);
+  transition: padding-right 0.25s ease-out;
+}
+.dashboard.panelOpen {
+  padding-right: calc(var(--panel-width) + 32px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard {
+    transition: none;
+  }
+}

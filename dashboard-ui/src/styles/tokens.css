@@ -1,0 +1,71 @@
+/*
+ * Design tokens — DESIGN.md Section 2.
+ * Do NOT add new colors here. New semantic? Reuse existing or use grayscale.
+ */
+:root {
+  /* ── Base ── */
+  --bg-page:       #0a0a0a;
+  --bg-card:       #1a1a1a;
+  --bg-card-idle:  #161616;
+  --bg-panel:      #141414;
+  --bg-terminal:   #0a0a0a;
+
+  /* ── Text ── */
+  --text-primary:    #f5f5f3;
+  --text-secondary:  #c8c8c4;
+  --text-muted:      #a0a09c;
+  --text-meta:       #888;
+  --text-tertiary:   #666;
+  --text-faint:      #555;
+  --text-faintest:   #4a4a4a;
+
+  /* ── Border ── */
+  --border-default:  rgba(255, 255, 255, 0.08);
+  --border-stronger: rgba(255, 255, 255, 0.12);
+  --border-subtle:   rgba(255, 255, 255, 0.06);
+  --divider:         rgba(255, 255, 255, 0.08);
+
+  /* ── Semantic (only these accent families) ── */
+  --amber:        #ef9f27;
+  --amber-bg:     rgba(239, 159, 39, 0.06);
+  --amber-border: rgba(239, 159, 39, 0.55);
+  --amber-glow:   rgba(239, 159, 39, 0.18);
+  --amber-text:   #2c1b00;
+
+  --red:        #e24b4a;
+  --red-border: rgba(226, 75, 74, 0.5);
+
+  --blue:        #378add;
+  --blue-text:   #9fb3dd;
+  --blue-bg:     rgba(120, 140, 200, 0.12);
+  --blue-accent: rgba(120, 140, 200, 0.18);
+
+  /* compacting indicator bar */
+  --compact-bar: #7a7a76;
+
+  /* ── Spacing (DESIGN.md Section 2.4, v2 row layout) ── */
+  --space-host-gap:        24px;   /* v1: 48px */
+  --space-host-to-team:    12px;   /* v1: 24px */
+  --space-team-to-card:     6px;   /* v1: 12px */
+  --space-card-gap:         0px;   /* v1: 8px — rows are flush */
+  --space-team-gap:        16px;   /* v1: 32px */
+  --space-host-header-pb:   8px;   /* v1: 10px */
+
+  /* ── Sizes (DESIGN.md Section 2.3, v2 row layout) ── */
+  --size-worker-name:    13px;     /* v1: 14px */
+  --size-state-label:    11px;
+  --size-detail:         12px;     /* v1: 13px */
+  --size-tmux-target:    11px;     /* v1: 10px — mono, slightly larger */
+  --size-host-header:    16px;     /* v1: 20px — v2 compression */
+  --size-team-label:     11px;
+  --size-panel-name:     15px;
+  --size-panel-section:  10px;
+
+  /* ── Radius (DESIGN.md Section 2.5) ── */
+  --radius-md: 8px;
+
+  /* ── Layout (Phase 3a) ──
+   * Sidepanel width: caps at 480px, floors at 360px, otherwise 40vw.
+   * Main content reserves the same width as right padding while open. */
+  --panel-width: min(480px, max(360px, 40vw));
+}

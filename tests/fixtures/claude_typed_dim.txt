@@ -1,0 +1,3 @@
+[1m─[0m
+❯ [2mTry "fix the bug"[0m
+─

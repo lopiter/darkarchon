@@ -1,0 +1,48 @@
+/* DESIGN.md Section 8. Centered card with onboarding tone. */
+
+.wrap {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+}
+
+.card {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 32px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.headline {
+  font-size: 16px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.body {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.meta {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.warn .headline {
+  color: var(--red);
+}
+.warn .card {
+  border-color: var(--red-border);
+}

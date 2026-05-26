@@ -1,0 +1,27 @@
+# Runtime state from third-party Claude Code plugins (oh-my-claudecode etc.) —
+# user-machine artifacts that have no place in the upstream repo.
+.omc/
+.claude/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Editor swap / lock files
+*.swp
+*.swo
+
+# Local-only env overrides
+.envrc
+.env
+.env.*
+!.env.example
+
+# Build / install artifacts (just in case — dashboard-ui has its own too)
+dist/
+build/
+*.egg-info/

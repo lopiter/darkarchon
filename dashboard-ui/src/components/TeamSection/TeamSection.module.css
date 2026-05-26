@@ -1,0 +1,18 @@
+.section {
+  /* spacing 은 부모(HostGroup)가 책임 — 자신은 박스 없음 */
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  font-size: var(--size-team-label);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-team-to-card);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card-gap);
+}

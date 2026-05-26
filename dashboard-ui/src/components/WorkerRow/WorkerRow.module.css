@@ -1,0 +1,244 @@
+/* v2 row layout — DESIGN.md Section 3.4 (post-patch).
+ * Single 28px row with fixed grid template so columns line up across
+ * teams and hosts. */
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns:
+    4px
+    minmax(160px, 1fr)
+    200px
+    60px
+    100px
+    minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px 0 0;
+  cursor: pointer;
+  background: transparent;
+  overflow: hidden;
+  transition: background-color 0.1s ease-out;
+  /* Mount animation — DESIGN.md v2 worker_added.
+   * opacity 0→1 + height 0→28 over 0.4s ease-out. */
+  animation: rowEnter 0.4s ease-out 1;
+}
+
+/* Exit animation — TeamSection sets `exiting` for ~300ms before unmount.
+ * Reverse of enter, ease-in. */
+.rowExit {
+  animation: rowExit 0.3s ease-in 1 forwards;
+  pointer-events: none;
+}
+
+@keyframes rowEnter {
+  from { opacity: 0; height: 0; }
+  to   { opacity: 1; height: 28px; }
+}
+@keyframes rowExit {
+  from { opacity: 1; height: 28px; }
+  to   { opacity: 0; height: 0; }
+}
+.row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.row:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.06);
+}
+.row:focus-visible .bar {
+  width: 6px;
+}
+
+/* ── left vertical bar ── */
+.bar {
+  align-self: stretch;
+  width: 4px;
+  transition: width 0.1s ease-out, box-shadow 0.4s ease-out;
+}
+.barAmber {
+  background: var(--amber);
+}
+.barRed {
+  background: var(--red);
+}
+.barOrch {
+  background: rgba(120, 140, 200, 0.55);
+}
+
+/* "new" dot — appears for 10s after an OS push targeting this row.
+ * Sits just right of the left bar so it shares the same "left edge =
+ * status channel" semantic. Static (no blink) per spec. */
+.newDot {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  pointer-events: none;
+}
+
+/* ── state-tinted row backgrounds ── */
+.rowAwaiting {
+  background: rgba(239, 159, 39, 0.06);
+}
+.rowRate {
+  background: rgba(226, 75, 74, 0.04);
+}
+.rowDead {
+  opacity: 0.5;
+}
+
+/* ── columns ── */
+.name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowAwaiting .name,
+.rowRate .name {
+  color: var(--text-primary);
+}
+
+.orchTag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--blue-text);
+  background: var(--blue-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.target {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox {
+  font-size: 10px;
+  color: var(--text-muted);
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dotIdle { background: var(--text-faint); }
+.dotBusy { background: var(--text-muted); }
+.dotAwaiting { background: var(--amber); }
+.dotRate { background: var(--red); }
+.dotDead { background: var(--text-faintest); }
+
+/* dispatch arrows — fade in/out as the flag toggles */
+.dispatchArrow {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+.dispatchArrowActive {
+  opacity: 1;
+}
+
+.detail {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detailAwaiting {
+  color: var(--amber);
+  font-style: normal;
+}
+.detailRate {
+  color: var(--red);
+  font-style: italic;
+}
+
+/* ── pulses ── */
+.pulseAmberRow {
+  animation: pulseAmberRow 1.5s ease-out 1 forwards;
+}
+.pulseRedRow {
+  animation: pulseRedRow 1.5s ease-out 1 forwards;
+}
+.pulseAmberBar {
+  animation: pulseAmberBar 1.5s ease-out 1 forwards;
+}
+.pulseRedBar {
+  animation: pulseRedBar 1.5s ease-out 1 forwards;
+}
+.mailboxBump {
+  animation: mailboxBump 0.3s ease-out 1;
+  transform-origin: right center;
+}
+
+@keyframes pulseAmberRow {
+  from { background-color: rgba(239, 159, 39, 0.18); }
+  to   { background-color: rgba(239, 159, 39, 0.06); }
+}
+@keyframes pulseRedRow {
+  from { background-color: rgba(226, 75, 74, 0.14); }
+  to   { background-color: rgba(226, 75, 74, 0.04); }
+}
+@keyframes pulseAmberBar {
+  from { box-shadow: 0 0 8px var(--amber-glow); }
+  to   { box-shadow: 0 0 0 transparent; }
+}
+@keyframes pulseRedBar {
+  from { box-shadow: 0 0 8px rgba(226, 75, 74, 0.4); }
+  to   { box-shadow: 0 0 0 transparent; }
+}
+@keyframes mailboxBump {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .rowExit,
+  .bar,
+  .dispatchArrow,
+  .pulseAmberRow,
+  .pulseRedRow,
+  .pulseAmberBar,
+  .pulseRedBar,
+  .mailboxBump {
+    animation: none !important;
+    transition: none !important;
+  }
+}

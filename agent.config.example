@@ -1,0 +1,27 @@
+# Copy to $STATE_DIR/agent.config and edit.
+
+# Main PC hub URL (LAN IP). Mandatory.
+HUB_URL=http://192.168.0.10:8774
+
+# Identifier shown in the dashboard. Defaults to hostname if omitted.
+HOST_ID=main-pc
+
+# Path to workers-runtime.env. Defaults to $STATE_DIR/workers-runtime.env.
+# Only the main PC (where spawn-worker.sh runs) has this file; remote PCs leave default and it's silently skipped.
+REGISTRY_PATH=
+
+# Scan interval in seconds.
+INTERVAL=5
+
+# Comma-separated list of LLM CLI process names to discover.
+# Include 'node' because Claude Code on macOS often shows up as the node
+# runtime in tmux's pane_current_command instead of "claude". The scanner
+# verifies with a Claude prompt marker before classifying, so unrelated
+# node panes won't be misreported.
+LLM_PROCESSES=claude,node
+
+# Comma-separated tmux window names. Any pane in a window with these names
+# is treated as an LLM worker regardless of the process name. Mark a pane
+# explicitly with `tmux rename-window claude` (or whatever you put here).
+# Add 'codex', 'gemini', etc. as you start using those LLMs.
+LLM_WINDOWS=claude
