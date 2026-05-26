@@ -1,10 +1,36 @@
 # darkarchon
 
-Coordinate multiple [Claude Code](https://claude.com/claude-code) instances across separate tmux windows, with file-based message passing and a live dashboard.
+Coordinate multiple [Claude Code](https://claude.com/claude-code) instances across **separate tmux windows and repositories** — each worker an independent `claude` process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
 > tmux window = isolated claude process · filesystem = message bus · tmux send-keys = short trigger
 
-Use when one claude session can't cover the work — e.g. parallel changes across multiple repos, each needing its own cwd, MCP servers, and skill configuration.
+Use when one claude session — or Claude Code's built-in `Task` sub-agent — can't cover the work. Sub-agents share the parent's cwd and `.claude/` config; darkarchon workers don't.
+
+---
+
+## Who this is for
+
+If you've hit any of these walls, this tool was built for you.
+
+### 1. You use Claude Code's `Task` tool, but your work spans multiple repositories
+
+Sub-agents spawned by `Task` run inside the parent process — same cwd, same MCP config, same tool permissions. They can't open a sibling repo as if it were "their" workspace. darkarchon gives each worker its own tmux window started in its target repo, so a worker for `~/work/backend` has a fully independent `claude` session rooted there.
+
+### 2. You can't use per-repo skills, plugins, or MCP servers across sub-agents
+
+A `claude` session inherits the `.claude/` setup of its cwd — its skills, its plugins, its MCP server list. `Task` sub-agents reuse the parent's, so a skill installed for repo A is invisible when the sub-agent is asked to work in repo B. Each darkarchon worker is a **fresh `claude` process** started in its repo, which picks up that repo's `.claude/` natively.
+
+### 3. You already have a Claude Code session running and don't want to throw it away
+
+`invite-worker.sh <name> <session:window>` registers an existing pane as a worker without respawning it. The dashboard tracks it, dispatch routes to it, but the running conversation (and its `/compact` history) is preserved.
+
+### 4. You live in tmux and find external UIs heavy
+
+darkarchon is shell scripts + a small Python hub. Workers are `claude` processes in tmux windows you can `Ctrl-b w` to. The dashboard is **optional** — `lib/tasks.sh` and `questions.sh` give you the same data on stdout when you'd rather not leave the terminal.
+
+### 5. You run multiple Claude Code instances and just want simple monitoring
+
+`dashboard.sh start` → open `http://localhost:5173`. Every worker on every host you've started an agent on shows up, grouped by host → team, with live state (idle / busy / awaiting / rate_limited / compacting / dead). OS push when a worker needs you. No accounts, no cloud, no telemetry.
 
 ---
 
