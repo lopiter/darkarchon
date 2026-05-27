@@ -404,6 +404,8 @@ HTML = """<!DOCTYPE html>
   .dispatches { font-size: 0.75rem; color: #4a7a1c; margin-top: 6px; font-family: ui-monospace, monospace; line-height: 1.4; }
   .dispatches .arrow { color: #aaa; }
   .mailbox { font-size: 0.75rem; color: #b88300; margin-top: 4px; font-family: ui-monospace, monospace; line-height: 1.4; }
+  .host-header.stale { color: #c46b3a; }
+  .empty-host { font-size: 0.78rem; color: #999; font-style: italic; padding: 6px 10px; background: rgba(255,255,255,0.5); border-left: 3px solid #d0d0d0; border-radius: 0 12px 12px 0; }
 </style></head><body>
 <h1>Team — <span id="session">…</span></h1>
 <div id="counts">—</div>
@@ -452,6 +454,14 @@ function renderCard(w) {
   </div>`;
 }
 
+function humanizeAge(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ago`;
+}
+
 async function refresh() {
   try {
     const r = await fetch('/api/status', {cache:'no-store'});
@@ -463,6 +473,15 @@ async function refresh() {
     // host → team → worker[]   (team is team_name from hub: session for plain
     // workers, dispatch-target session for orchestrators)
     const byHost = {};
+    const hostMeta = {};
+
+    // Seed byHost with every connected host so agent-up-but-no-workers
+    // hosts still render (otherwise they'd be invisible).
+    (d.hosts || []).forEach(h => {
+      hostMeta[h.host_id] = h;
+      byHost[h.host_id] = byHost[h.host_id] || {};
+    });
+
     d.workers.forEach(w => {
       counts[w.state] = (counts[w.state] || 0) + 1;
       const tn = teamOf(w);
@@ -475,6 +494,19 @@ async function refresh() {
     root.innerHTML = hostNames.map(host => {
       const sessions = byHost[host];
       const hostTotal = Object.values(sessions).reduce((a, ws) => a + ws.length, 0);
+      const meta = hostMeta[host];
+      const ageStr = meta ? humanizeAge(meta.last_seen) : '';
+      const staleClass = meta && meta.stale ? ' stale' : '';
+      const staleLabel = meta && meta.stale ? 'stale' : 'connected';
+
+      if (hostTotal === 0) {
+        const info = ageStr ? `agent ${staleLabel} · ${ageStr}` : `agent ${staleLabel}`;
+        return `<section class="host-group">
+          <h2 class="host-header${staleClass}">🖥 <span class="h-host">${esc(host)}</span><span class="h-count">${esc(info)}</span></h2>
+          <div class="empty-host">no workers detected</div>
+        </section>`;
+      }
+
       const sessionNames = Object.keys(sessions).sort();
       const sessionBlocks = sessionNames.map(sn => {
         const ws = sessions[sn];
@@ -484,8 +516,9 @@ async function refresh() {
           <div class="grid">${cards}</div>
         </div>`;
       }).join('');
+      const countLabel = ageStr ? `${hostTotal} workers · ${ageStr}` : `${hostTotal} workers`;
       return `<section class="host-group">
-        <h2 class="host-header">🖥 <span class="h-host">${esc(host)}</span><span class="h-count">${hostTotal} workers</span></h2>
+        <h2 class="host-header${staleClass}">🖥 <span class="h-host">${esc(host)}</span><span class="h-count">${esc(countLabel)}</span></h2>
         ${sessionBlocks}
       </section>`;
     }).join('');
@@ -669,6 +702,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {
             "session_name": SESSION_NAME,
             "state_dir": str(STATE_DIR),
+            "hosts": STORE.get_hosts(),
             "workers": workers,
             "ts": datetime.now(timezone.utc).isoformat(),
         }

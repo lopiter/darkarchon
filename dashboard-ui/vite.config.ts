@@ -10,7 +10,7 @@ export default defineConfig({
     proxy: {
       // hub dashboard.py serves /api/status and /api/events on 9774.
       '/api': {
-        target: 'http://localhost:9774',
+        target: 'http://localhost:8809',
         changeOrigin: true,
       },
     },
