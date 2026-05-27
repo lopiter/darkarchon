@@ -17,6 +17,8 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def fixture(name):  # noqa: D401  — placeholder, override per test
-    """Read a fixture file's text content."""
-    return (FIXTURES_DIR / name).read_text()
+def load_fixture():
+    """Return a function that loads a fixture file's text content by filename."""
+    def _load(name: str) -> str:
+        return (FIXTURES_DIR / name).read_text()
+    return _load

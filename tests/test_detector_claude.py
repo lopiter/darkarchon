@@ -18,6 +18,16 @@ def test_busy_when_active_spinner_above_prompt(load_fixture):
     assert "Whisking" in result["detail"]
 
 
+def test_busy_when_korean_gerund_above_prompt(load_fixture):
+    """Recent Claude Code TUI localizes the spinner verb — a Korean worker
+    reports e.g. "작성 중 …" instead of "Writing…". Detector must still
+    classify as busy."""
+    plain = load_fixture("claude_busy_korean.txt")
+    ansi = plain
+    result = classify_claude_state(plain, ansi)
+    assert result["state"] == "busy"
+
+
 def test_compacting_preempts_busy_classification(load_fixture):
     plain = load_fixture("claude_compacting.txt")
     ansi = plain

@@ -52,12 +52,16 @@ fi
 PANE_TAIL="$(printf '%s\n' "$PANE_TAIL" | grep -v '^[[:space:]]*$' | tail -15)"
 
 # Active-state markers (only present DURING current work):
-#   - ✽ + gerund + ellipsis   → e.g. "✽ Whisking…", "✽ Sautéing…"
-#                                (✻ alone with past tense like "✻ Cooked for 32s"
-#                                 is a COMPLETED indicator, not active)
-#   - "still running"          → background commands actively executing
+#   - spinner glyph + label + ellipsis → e.g. "✽ Whisking…", "★ 작성 중 …"
+#     Claude Code TUI localizes the verb based on user language, so we
+#     accept both English "-ing…" and Korean "중 …" endings. The glyph
+#     varies across versions (✽ ✻ ★ etc.), so we allow any of the
+#     known active glyphs.
+#     (✻ alone with past tense like "✻ Cooked for 32s" is a COMPLETED
+#      indicator — the regex requires the trailing ellipsis to avoid this.)
+#   - "still running" → background commands actively executing
 # Note: "thinking" in OMC status line is sticky/unreliable — not used.
-ACTIVE_PATTERN='✽[[:space:]][A-Za-z]+(ing|ling|ning)…|still running'
+ACTIVE_PATTERN='[★✽✻][[:space:]].*([A-Za-z]+(ing|ling|ning)|중[[:space:]]*)…|still running'
 
 if echo "$PANE_TAIL" | grep -qE "$ACTIVE_PATTERN"; then
     matched=$(echo "$PANE_TAIL" | grep -oE "$ACTIVE_PATTERN" | sort -u | tr '\n' ',' | sed 's/,$//')
