@@ -121,7 +121,7 @@ cd $DARKARCHON_HOME/dashboard-ui && npm install && npm run dev   # ui on http://
 - **agent** (`agent.py`) — per-host process that scans tmux for claude panes, captures their state, merges in heartbeat freshness, and POSTs to the hub.
 - **hub** (`dashboard.py`) — aggregator. Stores state by host, broadcasts SSE events, serves the React UI. Queries `tasks.db` for dispatch history.
 - **dashboard-ui** — React + Vite app at `dashboard-ui/`. Subscribes to `/api/events` (SSE) and polls `/api/status` as a fallback.
-- **dispatch** — writes a task row to `tasks.db` (+ legacy json), sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
+- **dispatch** — writes a task row to `tasks.db`, sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
 
@@ -182,7 +182,6 @@ sequenceDiagram
     dispatch->>tmux: check active marker (busy?)
     dispatch->>disp: delegate (idle)
     disp->>fs: /tmp/ee/p-<id>.txt = prompt
-    disp->>fs: tasks/<id>.json (legacy)
     disp->>store: insert row (pending)
     store->>fs: tasks.db append
     disp->>tmux: send-keys "Read p-<id> Write r-<id> output DONE-<id>"
@@ -276,7 +275,6 @@ All four flows write/read the same on-disk layout:
               $STATE_DIR (single source of truth)
               ├── workers-runtime.env
               ├── tasks.db (SQLite)
-              ├── tasks/<id>.json
               ├── questions/<id>.json
               ├── mailboxes/<worker>.jsonl
               ├── heartbeats/<worker>.json
@@ -392,7 +390,6 @@ Shells with different `DARKARCHON_TEAM` values land in different tmux sessions a
 ~/.darkarchon/<team>/
 ├── workers-runtime.env       # registry of spawned/invited workers
 ├── tasks.db                  # SQLite — every dispatch (status + result + history)
-├── tasks/<id>.json           # legacy per-task json (kept as backup, optional)
 ├── mailboxes/<worker>.jsonl  # inter-worker messages
 ├── questions/<id>.json       # worker→user clarifying questions
 ├── heartbeats/<worker>.json  # per-worker liveness (5s update, pid + last_seen)
@@ -453,10 +450,6 @@ git pull   # whichever remote you cloned from
 
 # optional — enables MCP tools inside spawned workers on this host
 pip install --user mcp
-
-# (one-time) migrate any pre-SQLite task json
-python3 scripts/migrate-tasks-to-sqlite.py --dry-run
-python3 scripts/migrate-tasks-to-sqlite.py
 
 # restart the agent so it loads the new code
 ./agent.sh stop

@@ -2,12 +2,12 @@
 # Dispatch a task to a worker using file-based prompt + outbox (omc-style).
 #
 # Flow:
-#   1. Write full prompt to $STATE_DIR/io/prompt-<id>.txt
+#   1. Write full prompt to /tmp/ee/p-<id>.txt
 #   2. Send a SHORT (<200 char) trigger via tmux send-keys telling worker to
-#      Read the prompt file, work, and Write the answer to result-<id>.txt
+#      Read the prompt file, work, and Write the answer to r-<id>.txt
 #   3. Poll the worker pane only for the literal "DONE-<id>" marker
 #   4. When marker appears, read the result file (no pane parsing)
-#   5. Persist task state to $STATE_DIR/tasks/<id>.json
+#   5. Persist task state in $STATE_DIR/tasks.db via lib/task_store.py
 #
 # Usage:
 #   dispatch.sh <worker> <prompt...>
@@ -69,13 +69,11 @@ DONE_MARKER="DONE-${TASK_ID}"
 
 # Filesystem layout
 # IO files use the short /tmp/ee path so the trigger fits in tmux's 200-char budget.
-# Persistent task state stays under $STATE_DIR.
+# Persistent task state lives in $STATE_DIR/tasks.db (managed by task_store.py).
 IO_DIR="/tmp/ee"
-TASKS_DIR="$STATE_DIR/tasks"
-mkdir -p "$IO_DIR" "$TASKS_DIR"
+mkdir -p "$IO_DIR"
 PROMPT_FILE="$IO_DIR/p-${TASK_ID}.txt"
 RESULT_FILE="$IO_DIR/r-${TASK_ID}.txt"
-TASK_FILE="$TASKS_DIR/$TASK_ID.json"
 
 DISPATCHED_AT="$(date -u +%FT%TZ)"
 
@@ -94,7 +92,7 @@ fi
 # tmux send-keys length / wrapping / sentinel rendering issues.
 printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
 
-# Initial pending JSON
+# Insert the initial pending row directly into SQLite (stdin pipe — no json file).
 jq -n \
     --arg id "$TASK_ID" \
     --arg worker "$WORKER" \
@@ -115,44 +113,23 @@ jq -n \
         prompt: $prompt,
         status: "pending",
         dispatched_at: $dispatched_at,
-        dispatched_by: $dispatched_by,
-        completed_at: null,
-        result: null,
-        error: null
-    }' > "$TASK_FILE"
-
-# Mirror initial pending row into the SQLite store. Best-effort: failure must
-# not break dispatch (json file remains the source-of-truth for backward compat
-# until the migration is complete).
-python3 "$HERE/task_store.py" insert "$TASK_FILE" 2>/dev/null || true
+        dispatched_by: $dispatched_by
+    }' | python3 "$HERE/task_store.py" insert
 
 update_status() {
     local stat="$1"
-    local tmp="$TASK_FILE.tmp.$$"
-    jq --arg s "$stat" '.status = $s' "$TASK_FILE" > "$tmp"
-    mv "$tmp" "$TASK_FILE"
-    python3 "$HERE/task_store.py" update-status "$TASK_ID" "$stat" 2>/dev/null || true
+    python3 "$HERE/task_store.py" update-status "$TASK_ID" "$stat"
 }
 
 set_result() {
     local result="$1"
-    local completed_at="$(date -u +%FT%TZ)"
-    local tmp="$TASK_FILE.tmp.$$"
-    jq --arg r "$result" --arg t "$completed_at" \
-        '. + {status: "completed", completed_at: $t, result: $r}' "$TASK_FILE" > "$tmp"
-    mv "$tmp" "$TASK_FILE"
-    python3 "$HERE/task_store.py" update-status "$TASK_ID" completed --result "$result" 2>/dev/null || true
+    python3 "$HERE/task_store.py" update-status "$TASK_ID" completed --result "$result"
 }
 
 set_error() {
     local errmsg="$1"
     local stat="$2"
-    local completed_at="$(date -u +%FT%TZ)"
-    local tmp="$TASK_FILE.tmp.$$"
-    jq --arg e "$errmsg" --arg s "$stat" --arg t "$completed_at" \
-        '. + {status: $s, completed_at: $t, error: $e}' "$TASK_FILE" > "$tmp"
-    mv "$tmp" "$TASK_FILE"
-    python3 "$HERE/task_store.py" update-status "$TASK_ID" "$stat" --error "$errmsg" 2>/dev/null || true
+    python3 "$HERE/task_store.py" update-status "$TASK_ID" "$stat" --error "$errmsg"
 }
 
 # Build the short trigger — kept under 200 chars for safety.

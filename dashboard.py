@@ -40,7 +40,6 @@ def _task_store(state_dir: Path | None = None) -> TaskStore:
 
 # ─── Globals (overridable via CLI for multi-team support) ───────────────────
 STATE_DIR = Path(os.environ.get("STATE_DIR") or (Path.home() / ".team"))
-TASKS_DIR = STATE_DIR / "tasks"
 SESSION_NAME = "team"
 STORE: HostStateStore = HostStateStore(stale_after_seconds=30)
 BROKER = SseBroker()
@@ -147,7 +146,6 @@ def _all_state_dirs() -> list:
       ~/.darkarchon/<team>/                <-- hub's STATE_DIR (own)
       ~/.darkarchon/<team>/<sub_a>/        <-- worktree (sub-dir)
       ~/.darkarchon/<team>/<sub_b>/        <-- worktree
-      ~/.darkarchon/<team>/tasks/          <-- NOT a worktree (no workers-runtime.env)
 
     A sub-dir is treated as a worktree state dir only when it contains
     workers-runtime.env. Its team name is derived as SESSION_NAME +
@@ -676,17 +674,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
 
     def _task(self, tid):
-        f = TASKS_DIR / f"{tid}.json"
-        if not f.exists():
-            return {"error": "not found", "id": tid}
-        try:
-            return json.loads(f.read_text())
-        except Exception as e:
-            return {"error": str(e), "id": tid}
+        row = _task_store().get(tid)
+        return row or {"error": "not found", "id": tid}
 
 
 def main():
-    global STATE_DIR, TASKS_DIR, SESSION_NAME, STORE
+    global STATE_DIR, SESSION_NAME, STORE
 
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8765)
@@ -698,7 +691,6 @@ def main():
 
     SESSION_NAME = args.session_name
     STATE_DIR = Path(args.state_dir)
-    TASKS_DIR = STATE_DIR / "tasks"
     STORE = HostStateStore(stale_after_seconds=args.stale_after)
 
     print(f"Team hub [{SESSION_NAME}] → http://{args.host}:{args.port}")

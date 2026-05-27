@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Manage / inspect dispatched tasks recorded in $STATE_DIR/tasks.db.
 #
-# Thin wrapper around lib/task_store.py — gives the legacy CLI shape while
-# all storage now lives in SQLite. Json files under $STATE_DIR/tasks/ are
-# still written by dispatch.sh for backward compat but not read here.
+# Thin wrapper around lib/task_store.py — all task state lives in SQLite.
 #
 # Usage:
 #   tasks.sh list              List all tasks (newest first) — id, worker, status, dispatched_at
