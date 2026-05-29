@@ -1,5 +1,6 @@
 /*
- * Baseline. Dark mode only — DESIGN.md Section 11 explicitly excludes light mode.
+ * Baseline. Dark is the default; a light theme is available via
+ * <html data-theme="light"> (toggled by ThemeToggle / useTheme).
  */
 body {
   background: var(--bg-page);
@@ -9,6 +10,7 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease-out, color 0.2s ease-out;
 }
 
 #root {

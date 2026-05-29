@@ -1,0 +1,3 @@
+ Working (12s • Esc to interrupt)
+▌
+ ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit

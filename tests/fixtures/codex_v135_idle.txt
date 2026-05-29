@@ -1,0 +1,9 @@
+╭────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.135.0)                     │
+│                                                │
+│ model:       gpt-5.5 medium   /model to change │
+│ directory:   /private/tmp/codex-worktest       │
+│ permissions: YOLO mode                         │
+╰────────────────────────────────────────────────╯
+› Write tests for @filename
+  gpt-5.5 medium · /private/tmp/codex-worktest

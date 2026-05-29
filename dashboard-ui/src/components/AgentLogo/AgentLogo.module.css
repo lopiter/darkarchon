@@ -1,0 +1,19 @@
+/* AgentLogo — small inline mark beside worker name. */
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.55;
+  line-height: 0;
+}
+
+/* Claude mark: warm off-white tint matching the brand's clay/sand palette */
+.claude {
+  color: #d4a57a;
+}
+
+/* Codex/OpenAI mark: cool neutral, slightly lighter than muted text */
+.codex {
+  color: var(--text-muted);
+}

@@ -1,6 +1,31 @@
 """Tests for the worker resolver — merges tmux scan results with registry metadata."""
 
-from lib.worker_resolver import parse_registry_text, resolve_workers
+from lib.worker_resolver import parse_registry_file, parse_registry_text, resolve_workers
+
+
+def test_parse_registry_extracts_agent_kind_defaulting_to_claude():
+    text = (
+        "WORKER_c1_NAME=c1\nWORKER_c1_TARGET=t:c1\nWORKER_c1_KIND=codex\n"
+        "WORKER_legacy_NAME=legacy\nWORKER_legacy_TARGET=t:legacy\n"  # no KIND
+    )
+    reg = parse_registry_text(text)
+    assert reg["t:c1"]["agent_kind"] == "codex"
+    assert reg["t:legacy"]["agent_kind"] == "claude"
+
+
+def test_parse_registry_file_tolerates_non_utf8_bytes(tmp_path):
+    """A registry may carry a mojibake byte in a free-form ROLE value. Parsing
+    must not crash (it would take down the whole multi-team agent merge); the
+    ASCII-keyed TARGET/NAME/KIND must still be extracted."""
+    p = tmp_path / "workers-runtime.env"
+    # Valid ASCII keys + a ROLE value with an invalid UTF-8 continuation byte.
+    p.write_bytes(
+        b"WORKER_w_NAME=w\nWORKER_w_TARGET=teamX:w\nWORKER_w_KIND=codex\n"
+        b"WORKER_w_ROLE=API \xe2\x80 broken\n"
+    )
+    reg = parse_registry_file(p)
+    assert reg["teamX:w"]["name"] == "w"
+    assert reg["teamX:w"]["agent_kind"] == "codex"
 
 
 def test_parse_registry_extracts_name_target_role():

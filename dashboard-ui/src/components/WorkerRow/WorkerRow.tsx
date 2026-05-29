@@ -15,6 +15,7 @@
  */
 
 import type { KeyboardEvent } from 'react';
+import { AgentLogo } from '../AgentLogo/AgentLogo';
 import { useDashboardStore } from '../../store/dashboard';
 import type { Worker, WorkerState } from '../../types/domain';
 import styles from './WorkerRow.module.css';
@@ -132,6 +133,7 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
       {isNew && <div className={styles.newDot} aria-label="new awaiting notification" />}
 
       <div className={styles.name}>
+        <AgentLogo process={worker.process} size={14} />
         <span>{worker.name}</span>
         {worker.isOrchestrator && <span className={styles.orchTag}>ORCH</span>}
       </div>

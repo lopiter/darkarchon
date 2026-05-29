@@ -1,0 +1,4 @@
+⚠️ stream error: Failed to refresh token: 401 Unauthorized; retrying 1/5 …
+🖐  Failed to refresh token: 401 Unauthorized
+▌
+ ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit

@@ -24,16 +24,35 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib/_lib.sh"
 
+# Optional --kind overrides auto-detection (claude|codex). Default: auto-detect
+# from pane content below.
+KIND=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --kind)   KIND="${2:-}"; shift 2 ;;
+        --kind=*) KIND="${1#--kind=}"; shift ;;
+        --)       shift; break ;;
+        -*)       echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
+        *)        break ;;
+    esac
+done
+
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 <name> <session:window> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] <name> <session:window> [<role>]" >&2
     echo "  <name>            worker handle (sanitized; matches what dispatch.sh accepts)" >&2
-    echo "  <session:window>  tmux target of the existing Claude pane" >&2
+    echo "  <session:window>  tmux target of the existing Claude/codex pane" >&2
     echo "  <role>            free-form label (default: worker-invited)" >&2
+    echo "  --kind            force agent flavor; omit to auto-detect from pane" >&2
     exit 1
 fi
 NAME="$1"
 TARGET="$2"
 ROLE="${3:-worker-invited}"
+
+if [ -n "$KIND" ] && [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ]; then
+    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex)" >&2
+    exit 1
+fi
 
 # Sanity checks
 if [[ ! "$NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
@@ -73,12 +92,29 @@ fi
 CWD="$(tmux display-message -p -t "$TARGET" '#{pane_current_path}' 2>/dev/null || true)"
 [ -z "$CWD" ] && CWD="(unknown)"
 
-# Heuristic: does pane look like Claude?
+# cwd-collision warning (same rationale as spawn-worker.sh): a busy same-cwd peer
+# causes dispatch-safe to refuse, serializing edits to one git working tree.
+if [ "$CWD" != "(unknown)" ]; then
+    SHARED_CWD="$(workers_sharing_dir "$CWD" "$NAME" | tr '\n' ' ' | sed 's/ *$//')"
+    if [ -n "$SHARED_CWD" ]; then
+        echo "WARNING: cwd '$CWD' is already used by worker(s): $SHARED_CWD" >&2
+        echo "         Dispatches across same-cwd workers are serialized." >&2
+    fi
+fi
+
+# Heuristic: which agent is in this pane? Check Claude markers first (distinctive
+# model names / banner — codex's "esc to interrupt" overlaps Claude's busy line,
+# so order matters), then codex markers. An explicit --kind skips detection.
 PANE="$(tmux capture-pane -p -t "$TARGET" -S -50 2>/dev/null || true)"
-if echo "$PANE" | grep -qE 'Claude Code|bypass permissions on|Opus|Sonnet|Haiku'; then
-    CLAUDE_DETECTED=yes
+DETECT_NOTE=""
+if [ -n "$KIND" ]; then
+    DETECT_NOTE="forced via --kind"
+elif echo "$PANE" | grep -qE 'Claude Code|bypass permissions on|Opus|Sonnet|Haiku'; then
+    KIND=claude; DETECT_NOTE="detected claude"
+elif echo "$PANE" | grep -qE 'OpenAI Codex|⌃T transcript|⌃J newline|/approvals|Esc to interrupt'; then
+    KIND=codex; DETECT_NOTE="detected codex"
 else
-    CLAUDE_DETECTED=no
+    KIND=claude; DETECT_NOTE="unsure-default-claude"
 fi
 
 # Register in runtime — single lock covers both registry append and the
@@ -88,11 +124,12 @@ _persist_invite_registration() {
     mkdir -p "$STATE_DIR"
     {
         echo ""
-        echo "# invited $(date -u +%FT%TZ)  name=$NAME  source=$TARGET  detected_claude=$CLAUDE_DETECTED"
+        echo "# invited $(date -u +%FT%TZ)  name=$NAME  source=$TARGET  kind=$KIND ($DETECT_NOTE)"
         printf 'WORKER_%s_NAME=%q\n'     "$SAFE" "$NAME"
         printf 'WORKER_%s_TARGET=%q\n'   "$SAFE" "$TARGET"
         printf 'WORKER_%s_DIR=%q\n'      "$SAFE" "$CWD"
         printf 'WORKER_%s_ROLE=%q\n'     "$SAFE" "$ROLE"
+        printf 'WORKER_%s_KIND=%q\n'     "$SAFE" "$KIND"
         printf 'WORKER_%s_EXTERNAL=1\n'  "$SAFE"
     } >> "$STATE_DIR/workers-runtime.env"
 
@@ -107,14 +144,14 @@ _persist_invite_registration() {
 with_registry_lock _persist_invite_registration
 
 echo "Invited worker '$NAME'"
-echo "  target:         $TARGET (external — not in our session $SESSION_NAME)"
-echo "  cwd:            $CWD"
-echo "  role:           $ROLE"
-echo "  claude detected: $CLAUDE_DETECTED"
-if [ "$CLAUDE_DETECTED" = "no" ]; then
+echo "  target:  $TARGET (external — not in our session $SESSION_NAME)"
+echo "  cwd:     $CWD"
+echo "  role:    $ROLE"
+echo "  kind:    $KIND ($DETECT_NOTE)"
+if [ "$DETECT_NOTE" = "unsure-default-claude" ]; then
     echo
-    echo "  WARNING: pane content doesn't show Claude markers. Dispatch may fail."
-    echo "  If the pane IS running Claude, ignore. Otherwise launch Claude there first."
+    echo "  WARNING: couldn't detect the agent from pane content — defaulted to claude."
+    echo "  If this pane runs codex, re-invite with: $0 --kind codex '$NAME' '$TARGET'"
 fi
 echo
 echo "Dispatch:  $HERE/lib/dispatch.sh $NAME '<prompt>'"
