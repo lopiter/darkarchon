@@ -13,6 +13,7 @@ function w(
     state,
     role: '',
     tmuxTarget: `${name}:1`,
+    process: 'claude',
     isOrchestrator: false,
     enteredStateAt,
     dispatchOut: false,

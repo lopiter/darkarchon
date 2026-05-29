@@ -241,6 +241,30 @@ export const dummyStatus: RawStatusResponse = {
       is_orchestrator: false,
     },
 
+    // ── codex worker — for logo visual testing ──
+    {
+      target: 'myteam:4.1',
+      process: 'codex',
+      window_name: 'codex',
+      cwd: '/Users/u/work/website/infra',
+      pane_pid: '9873',
+      state: 'idle',
+      detail: '',
+      name: 'infra',
+      role: 'terraform',
+      external: false,
+      kind: 'registered',
+      host: 'main',
+      host_last_seen: secAgo(3),
+      pending_mailbox: null,
+      recent_tasks: [],
+      last_activity_age: '1m ago',
+      incoming_dispatches: [],
+      outgoing_dispatches: [],
+      team_name: 'myteam',
+      is_orchestrator: false,
+    },
+
     // ── sim-host / SMOKETEST (stale — workers force-marked dead, host dimmed) ──
     {
       target: 'smoke:0.0',

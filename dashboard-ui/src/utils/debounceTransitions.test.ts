@@ -13,6 +13,7 @@ function w(id: string): Worker {
     state: 'awaiting_user:typed',
     role: '',
     tmuxTarget: `${id}:1`,
+    process: 'claude',
     isOrchestrator: false,
     enteredStateAt: '2026-05-23T15:00:00Z',
     dispatchOut: false,

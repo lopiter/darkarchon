@@ -113,6 +113,7 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
     state: mapState(rw.state),
     role: rw.role,
     tmuxTarget: rw.target,
+    process: rw.process,
     detail: rw.detail || undefined,
     isOrchestrator: rw.is_orchestrator,
     enteredStateAt: new Date(refTs).toISOString(),

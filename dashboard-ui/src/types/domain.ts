@@ -25,6 +25,8 @@ export interface Worker {
   state: WorkerState;
   role: string;
   tmuxTarget: string;
+  /** Agent process type — 'claude' | 'codex' | other */
+  process: string;
   detail?: string;
   isOrchestrator: boolean;
   /**
