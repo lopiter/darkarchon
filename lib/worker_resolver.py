@@ -39,7 +39,15 @@ def parse_registry_text(text: str) -> dict:
 def parse_registry_file(path: Path) -> dict:
     if not path.exists():
         return {}
-    return parse_registry_text(path.read_text())
+    # Decode tolerantly: a registry may contain a mojibake byte in a free-form
+    # ROLE value (e.g. a mangled em-dash). The keys we parse are ASCII, so
+    # replacing undecodable bytes preserves every TARGET/NAME/KIND while keeping
+    # one corrupt team file from crashing the whole multi-team merge.
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return parse_registry_text(text)
 
 
 def _target_to_window_key(target: str) -> str:
