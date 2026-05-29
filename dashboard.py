@@ -298,14 +298,63 @@ def _registered_workers_by_team() -> dict:
         if not reg_file.exists():
             continue
         try:
-            text = reg_file.read_text()
-        except Exception:
+            text = reg_file.read_text(errors="replace")
+        except OSError:
             continue
         for m in _re.finditer(r"^WORKER_\w+_NAME=(.+)$", text, _re.M):
             val = m.group(1).strip().strip("'").strip('"')
             if val:
                 result[val] = team_name
     return result
+
+
+def _registered_teams_by_target() -> dict:
+    """{registry TARGET (session:window) -> team_name} across the hub's team dirs.
+
+    Target-keyed, unlike `_registered_workers_by_team` (name-keyed). A worker
+    NAME duplicated across teams — e.g. a stale leftover entry in one team plus
+    the live entry in another — no longer collides on team assignment, because a
+    pane only matches the registry entry that lists ITS actual target.
+    """
+    import re as _re
+
+    result: dict[str, str] = {}
+    for state_dir, team_name in _all_state_dirs():
+        reg_file = state_dir / "workers-runtime.env"
+        if not reg_file.exists():
+            continue
+        try:
+            text = reg_file.read_text(errors="replace")
+        except OSError:
+            continue
+        for m in _re.finditer(r"^WORKER_\w+_TARGET=(.+)$", text, _re.M):
+            val = m.group(1).strip().strip("'").strip('"')
+            if val:
+                result[val] = team_name
+    return result
+
+
+def _registered_team_for_worker(worker: dict, teams_by_target: dict) -> str | None:
+    """Team for a scanned worker, matched by tmux TARGET (not name).
+
+    The registry stores `session:window-name`; a scanned pane reports
+    `session:window-index.pane-index`. Try both shapes (and the worker's
+    window_name) so an invited/spawned worker resolves to the team whose
+    registry lists its target — and a same-name entry elsewhere does not."""
+    target = worker.get("target", "")
+    if not target:
+        return None
+    session, _, win = target.partition(":")
+    candidates = [target]
+    if win and "." in win:
+        candidates.append(f"{session}:{win.rsplit('.', 1)[0]}")  # drop .pane
+    window_name = worker.get("window_name")
+    if window_name and session:
+        candidates.append(f"{session}:{window_name}")
+    for c in candidates:
+        if c in teams_by_target:
+            return teams_by_target[c]
+    return None
 
 
 def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
@@ -455,6 +504,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         workers = STORE.get_all_workers()
         dispatches = _active_dispatches_index()
         registered_by_team = _registered_workers_by_team()
+        registered_by_target = _registered_teams_by_target()
         orchestrator_team = _orchestrator_team_index(registered_by_team)
         mailbox_idx = _mailbox_index()
         for w in workers:
@@ -488,9 +538,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             #   2. orchestrator pane that dispatched into a known team.
             #   3. registered worker whose session is none of ours (invited
             #      EXTERNAL like writer at docu:1) — fall back to registry.
+            #      Matched by TARGET, so a stale/foreign same-NAME entry can't
+            #      hijack the team (see _registered_team_for_worker).
             #   4. default: own session.
             hub_team_by_session = _team_for_session(default_team)
-            registered_team = registered_by_team.get(w["name"])
+            registered_team = _registered_team_for_worker(w, registered_by_target)
             if hub_team_by_session:
                 w["team_name"] = hub_team_by_session
                 w["is_orchestrator"] = False
