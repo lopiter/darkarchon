@@ -65,6 +65,15 @@ Claude reads the rest of this README, decides which shell rc (`~/.zshrc` / `~/.b
 
 For a step-by-step manual install, see Quick start below.
 
+### Drive it with natural language (skill)
+
+You don't have to memorize the scripts. `skills/darkarchon-team/SKILL.md` is a
+ready-to-copy [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills):
+drop it into `~/.claude/skills/darkarchon-team/` and Claude maps requests like
+"spawn a backend worker", "invite this pane as a reviewer", "have backend add a
+health endpoint", or "stop the team" to the right darkarchon commands. It's a
+generic starting point — tailor the team-naming and project conventions to taste.
+
 ---
 
 ## Quick start
