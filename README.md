@@ -1,6 +1,6 @@
 # darkarchon
 
-Coordinate multiple [Claude Code](https://claude.com/claude-code) instances across **separate tmux windows and repositories** — each worker an independent `claude` process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
+Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
 > tmux window = isolated claude process · filesystem = message bus · tmux send-keys = short trigger
 
@@ -93,6 +93,31 @@ cd $DARKARCHON_HOME/dashboard-ui && npm install && npm run dev   # ui on http://
 ```
 
 `spawn-worker.sh` creates the tmux session on demand if it doesn't exist. The worker runs `claude --permission-mode auto`, reads its role prompt from `prompts/`, and (when `mcp` is installed) loads the darkarchon MCP server as a child process.
+
+### Claude or Codex workers
+
+Workers can be either Claude Code or OpenAI Codex. Pass `--kind` to `spawn-worker.sh`
+(default `claude`); `invite-worker.sh` auto-detects the kind from the pane and
+takes `--kind` only to override.
+
+```bash
+# spawn a Codex worker (needs the `codex` CLI installed + `codex login`)
+$DARKARCHON_HOME/lib/spawn-worker.sh --kind codex reviewer ~/projects/backend review
+# dispatch + dashboard are identical regardless of kind
+$DARKARCHON_HOME/dispatch-safe.sh reviewer 'review the latest changes'
+```
+
+Codex workers launch as a persistent `codex --dangerously-bypass-approvals-and-sandbox`
+TUI (no `codex exec`). The dispatch contract is the same one-line trigger; the
+worker's kind is recorded in the registry so dispatch, busy-detection, and the
+dashboard route to the right per-agent logic. Two notable differences from Claude:
+
+- **No launch-time prompt / MCP injection.** Codex has no `--append-system-prompt`
+  or `--mcp-config`; the team contract isn't written into the repo, and peer
+  tools fall back to the legacy `ask.sh` / `mailbox.sh` path (MCP-less).
+- **Same-cwd serialization.** A Claude dev worker and a Codex reviewer can share
+  one repo — `dispatch-safe.sh` refuses a dispatch while a *same-cwd peer* is
+  busy, so the two never edit the working tree concurrently.
 
 ---
 
@@ -295,8 +320,8 @@ tmux carries short triggers only; the filesystem is the message bus.
 
 | Script | Purpose |
 |---|---|
-| `lib/spawn-worker.sh <name> <cwd> [role]` | Create a new tmux window and start claude in it |
-| `invite-worker.sh <name> <session:window> [role]` | Register an existing claude pane as a worker (no respawn) |
+| `lib/spawn-worker.sh [--kind claude\|codex] <name> <cwd> [role]` | Create a new tmux window and start a Claude or Codex worker in it (default claude) |
+| `invite-worker.sh [--kind claude\|codex] <name> <session:window> [role]` | Register an existing Claude/Codex pane as a worker (no respawn; kind auto-detected) |
 | `uninvite-worker.sh <name>` | Remove an invited worker from the registry (pane untouched) |
 | `dispatch-safe.sh <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
@@ -356,7 +381,7 @@ Reasons to prefer MCP when available:
 Reasons the legacy sh path stays:
 
 - **Zero new dependencies** — works without `mcp` package, useful for stripped-down environments.
-- **Multi-LLM future** — when running non-Claude workers (Codex / Gemini CLIs that lack a built-in MCP client), the sh path is the only one available. Both can coexist in the same team because they share the file format.
+- **Multi-LLM** — Codex workers (and other non-Claude CLIs) lack Claude Code's built-in MCP client, so the sh path is the only one available to them. Claude and Codex workers coexist in the same team because they share the on-disk file format.
 - **Backward compat** — anything calling `ask.sh` / `mailbox.sh` directly (e.g. from `prompts/`-injected examples, ad-hoc shell sessions, or future tooling) keeps working unchanged.
 
 ---
