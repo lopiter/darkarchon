@@ -69,3 +69,49 @@
    * Main content reserves the same width as right padding while open. */
   --panel-width: min(480px, max(360px, 40vw));
 }
+
+/*
+ * Light theme — applied when <html data-theme="light"> (set by useTheme).
+ * Overrides ONLY color tokens; spacing / sizes / radius / layout are shared
+ * with the dark default above. No new token names are introduced.
+ */
+:root[data-theme='light'] {
+  /* ── Base ── */
+  --bg-page:       #f4f4f2;
+  --bg-card:       #ffffff;
+  --bg-card-idle:  #f7f7f5;
+  --bg-panel:      #ffffff;
+  --bg-terminal:   #f0f0ee;
+
+  /* ── Text (inverted ramp) ── */
+  --text-primary:    #1a1a18;
+  --text-secondary:  #3a3a36;
+  --text-muted:      #5a5a55;
+  --text-meta:       #707070;
+  --text-tertiary:   #909090;
+  --text-faint:      #a8a8a8;
+  --text-faintest:   #bcbcbc;
+
+  /* ── Border (black alphas instead of white) ── */
+  --border-default:  rgba(0, 0, 0, 0.10);
+  --border-stronger: rgba(0, 0, 0, 0.16);
+  --border-subtle:   rgba(0, 0, 0, 0.06);
+  --divider:         rgba(0, 0, 0, 0.10);
+
+  /* ── Semantic (same hue families, tuned for light bg) ── */
+  --amber:        #c07e12;
+  --amber-bg:     rgba(239, 159, 39, 0.14);
+  --amber-border: rgba(239, 159, 39, 0.55);
+  --amber-glow:   rgba(239, 159, 39, 0.22);
+  --amber-text:   #2c1b00;
+
+  --red:        #c93534;
+  --red-border: rgba(226, 75, 74, 0.5);
+
+  --blue:        #2f6fb0;
+  --blue-text:   #2f5a8f;
+  --blue-bg:     rgba(120, 140, 200, 0.14);
+  --blue-accent: rgba(120, 140, 200, 0.30);
+
+  --compact-bar: #9a9a96;
+}

@@ -4,6 +4,7 @@ import { isHostStale } from '../../utils/transform';
 import { EmptyState } from '../EmptyState/EmptyState';
 import { HostGroup } from '../HostGroup/HostGroup';
 import { NotificationToggle } from '../NotificationToggle/NotificationToggle';
+import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import styles from './Dashboard.module.css';
 
 export function Dashboard() {
@@ -28,6 +29,7 @@ export function Dashboard() {
 
   return (
     <>
+      <ThemeToggle />
       <NotificationToggle />
       <main
         className={`${styles.dashboard} ${panelOpen ? styles.panelOpen : ''}`}
