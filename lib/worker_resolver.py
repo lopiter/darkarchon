@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_REGISTRY_LINE = re.compile(r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL)=(.*)$", re.M)
+_REGISTRY_LINE = re.compile(r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL|KIND)=(.*)$", re.M)
 
 
 def parse_registry_text(text: str) -> dict:
@@ -30,6 +30,8 @@ def parse_registry_text(text: str) -> dict:
             "role": info.get("ROLE", ""),
             "cwd": info.get("DIR", ""),
             "external": info.get("EXTERNAL") == "1",
+            # Agent flavor (claude|codex). Absent in legacy entries ⇒ claude.
+            "agent_kind": info.get("KIND", "claude"),
         }
     return result
 

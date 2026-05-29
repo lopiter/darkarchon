@@ -20,8 +20,17 @@ _NODE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-\S+)?$")
 _CLAUDE_CANDIDATE_PROCS = {"claude", "node"}
 # codex is a native binary, so its pane_current_command is just "codex".
 _CODEX_CANDIDATE_PROCS = {"codex"}
-# codex TUI footer/status substrings (ASCII only — composer/footer glyphs vary).
-_CODEX_MARKERS = ("Working (", "Esc to interrupt", "⏎ send", "⌃J newline", "⌃T transcript")
+# codex TUI substrings. Spans versions: 0.34 showed a footer
+# ("⏎ send  ⌃J newline  ⌃T transcript"); 0.135 dropped the footer and shows an
+# "OpenAI Codex (vX)" banner + "Working (Ns • esc to interrupt)" while busy.
+_CODEX_MARKERS = (
+    "OpenAI Codex",
+    "Working (",
+    "esc to interrupt",
+    "⏎ send",
+    "⌃J newline",
+    "⌃T transcript",
+)
 
 
 def _looks_like_claude_candidate(process: str) -> bool:
@@ -35,9 +44,26 @@ def _looks_like_codex_candidate(process: str) -> bool:
 
 
 def _has_codex_marker(plain: str) -> bool:
-    hits = sum(1 for m in _CODEX_MARKERS if m in plain)
-    # footer shows several markers at once; "Working (" alone is enough mid-task.
-    return "Working (" in plain or "Esc to interrupt" in plain or hits >= 2
+    lower = plain.lower()
+    # Strong standalone signals (busy line / banner) — present in any one suffices.
+    if "working (" in lower or "esc to interrupt" in lower or "openai codex" in lower:
+        return True
+    # Otherwise require ≥2 of the (older) footer hints to avoid false positives.
+    return sum(1 for m in _CODEX_MARKERS if m in plain) >= 2
+
+
+def _pane_window_keys(target: str, window_name: str) -> list[str]:
+    """Registry keys a pane could match. The registry stores `session:window-name`
+    (spawn-worker builds the target from the worker NAME), while a scanned pane's
+    target is `session:window-index.pane-index`. Try both shapes so a registered
+    worker is recognized regardless of how the pane is addressed."""
+    keys = [target]
+    if "." in target.split(":", 1)[-1]:
+        keys.append(target.rsplit(".", 1)[0])  # strip .pane
+    if window_name:
+        session = target.split(":", 1)[0]
+        keys.append(f"{session}:{window_name}")
+    return keys
 
 
 @dataclass
@@ -61,14 +87,18 @@ def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
 def list_llm_panes(
     allowed_processes: tuple[str, ...] = ("claude", "codex"),
     window_names: tuple[str, ...] = ("claude",),
+    known_kinds: dict[str, str] | None = None,
 ) -> list[PaneInfo]:
     """Enumerate all tmux panes and filter to LLM candidates.
 
     A pane is included if its foreground process is in `allowed_processes`,
     OR its process looks like a Node version string (Claude Code on macOS),
     OR its tmux window_name is in `window_names` (explicit user marking via
-    `tmux rename-window`).
+    `tmux rename-window`),
+    OR it matches a registered worker in `known_kinds` (so a codex worker whose
+    process shows as plain `node` — e.g. an nvm-installed codex — is still found).
     """
+    known_kinds = known_kinds or {}
     rc, out = _run_tmux(
         [
             "tmux",
@@ -89,7 +119,8 @@ def list_llm_panes(
         pid, process, target, window_name, cwd = parts
         match_proc = process in allowed_processes or bool(_NODE_VERSION_RE.match(process))
         match_window = window_name in window_names
-        if not (match_proc or match_window):
+        match_known = any(k in known_kinds for k in _pane_window_keys(target, window_name))
+        if not (match_proc or match_window or match_known):
             continue
         panes.append(PaneInfo(pid=pid, process=process, target=target, window_name=window_name, cwd=cwd))
     return panes
@@ -110,6 +141,7 @@ def capture_pane(target: str, with_ansi: bool = False) -> str:
 def scan_panes(
     allowed_processes: tuple[str, ...] = ("claude", "codex"),
     window_names: tuple[str, ...] = ("claude",),
+    known_kinds: dict[str, str] | None = None,
 ) -> list[dict]:
     """Scan all LLM panes on this host and return state-annotated worker dicts.
 
@@ -135,7 +167,8 @@ def scan_panes(
             "recent_output": ["line 1", "line 2", ...],  # last 8 non-empty lines
         }
     """
-    panes = list_llm_panes(allowed_processes, window_names)
+    known_kinds = known_kinds or {}
+    panes = list_llm_panes(allowed_processes, window_names, known_kinds)
     out: list[dict] = []
     for p in panes:
         plain = capture_pane(p.target, with_ansi=False)
@@ -143,11 +176,28 @@ def scan_panes(
         has_claude_marker = "❯" in plain or "─" in plain
         has_codex_marker = _has_codex_marker(plain)
 
+        # Registry is authoritative: if this pane is a registered worker, route
+        # classification by its recorded kind rather than guessing from process
+        # name or TUI glyphs. This is the robust fix for (a) codex showing as a
+        # plain `node` process and (b) codex's box-drawing `─` falsely matching
+        # the Claude marker — both would otherwise misroute to the wrong detector.
+        registered_kind = None
+        for k in _pane_window_keys(p.target, p.window_name):
+            if k in known_kinds:
+                registered_kind = known_kinds[k]
+                break
+
         explicit = p.window_name in window_names
         claude_proc = _looks_like_claude_candidate(p.process)
         codex_proc = _looks_like_codex_candidate(p.process)
 
-        if codex_proc:
+        if registered_kind == "codex":
+            state = classify_codex_state(plain, ansi)
+            effective_process = "codex"
+        elif registered_kind == "claude":
+            state = classify_claude_state(plain, ansi)
+            effective_process = "claude"
+        elif codex_proc:
             # Process is literally `codex` — trust it and use the codex detector.
             # (codex panes can briefly show none of the markers while booting;
             # the codex detector treats that as idle, which is safe.)
@@ -155,26 +205,27 @@ def scan_panes(
             effective_process = "codex"
         elif explicit:
             # User-marked window — trust the intent, route by which TUI is present.
-            if has_claude_marker:
-                state = classify_claude_state(plain, ansi)
-                effective_process = "claude"
-            elif has_codex_marker:
+            # Check codex first: its box-drawing `─` also satisfies has_claude_marker,
+            # so a claude-first check would misroute codex panes.
+            if has_codex_marker:
                 state = classify_codex_state(plain, ansi)
                 effective_process = "codex"
+            elif has_claude_marker:
+                state = classify_claude_state(plain, ansi)
+                effective_process = "claude"
             else:
                 # Marked but no recognizable TUI — show as unknown.
                 state = {"state": "unknown", "detail": f"window={p.window_name}"}
                 effective_process = p.window_name
         elif claude_proc:
             # Auto-discovered by process name — require a marker to avoid false
-            # positives on unrelated node panes. A codex marker here is unlikely
-            # (claude/node process) but route correctly if it somehow appears.
-            if has_claude_marker:
-                state = classify_claude_state(plain, ansi)
-                effective_process = "claude"
-            elif has_codex_marker:
+            # positives on unrelated node panes. Codex-first for the same `─` reason.
+            if has_codex_marker:
                 state = classify_codex_state(plain, ansi)
                 effective_process = "codex"
+            elif has_claude_marker:
+                state = classify_claude_state(plain, ansi)
+                effective_process = "claude"
             else:
                 continue  # not actually an LLM TUI — drop
         else:

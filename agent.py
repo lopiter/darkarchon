@@ -117,7 +117,16 @@ def _collect_state_dirs(main_path: Path) -> list[Path]:
 
 def report_once(cfg: AgentConfig) -> int:
     registry = _parse_all_registries(cfg.registry_path)
-    scanned = scan_panes(allowed_processes=cfg.llm_processes, window_names=cfg.llm_window_names)
+    # Feed the registry's recorded agent kind into the scanner so it routes each
+    # registered worker to the right detector (codex vs claude) — authoritative
+    # over process-name/TUI-glyph heuristics, which are fragile (e.g. nvm codex
+    # shows as `node`; codex box-drawing `─` looks like a Claude marker).
+    known_kinds = {t: m.get("agent_kind", "claude") for t, m in registry.items()}
+    scanned = scan_panes(
+        allowed_processes=cfg.llm_processes,
+        window_names=cfg.llm_window_names,
+        known_kinds=known_kinds,
+    )
     workers = resolve_workers(scanned, registry)
     workers = annotate_workers(workers, *_collect_state_dirs(cfg.registry_path))
     url = f"{cfg.hub_url.rstrip('/')}/api/hosts/{cfg.host_id}/state"

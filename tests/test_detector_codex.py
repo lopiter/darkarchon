@@ -56,3 +56,19 @@ def test_blank_capture_is_not_busy_or_error():
     result = classify_codex_state("", "")
     assert result["state"] in ("idle", "unknown")
     assert result["state"] not in ("busy", "error")
+
+
+# ── codex-cli 0.135.0 (real captures; TUI changed substantially from 0.34) ──
+# 0.135 dropped the "⏎ send …" footer and shows an "OpenAI Codex (vX)" banner;
+# busy uses lowercase "esc to interrupt". These guard against version drift.
+
+def test_v135_idle_classified_idle(load_fixture):
+    plain = load_fixture("codex_v135_idle.txt")
+    result = classify_codex_state(plain, plain)
+    assert result["state"] == "idle"
+
+
+def test_v135_busy_classified_busy(load_fixture):
+    plain = load_fixture("codex_v135_busy.txt")
+    result = classify_codex_state(plain, plain)
+    assert result["state"] == "busy"
