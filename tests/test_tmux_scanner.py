@@ -60,8 +60,9 @@ def test_list_llm_panes_includes_window_name_matches():
     assert panes[0].process == "zsh"
 
 
-def test_scan_panes_attaches_state_for_claude_only():
-    """scan_panes calls list_llm_panes + capture_pane + detector per pane."""
+def test_scan_panes_routes_claude_and_codex_to_their_detectors():
+    """scan_panes classifies a claude pane with the Claude detector (busy spinner)
+    and a codex pane with the codex detector (Working(…) line), per process."""
     from lib.tmux_scanner import PaneInfo
 
     panes = [
@@ -70,7 +71,14 @@ def test_scan_panes_attaches_state_for_claude_only():
     ]
 
     def fake_capture(target: str, with_ansi: bool):
-        return "  ✽ Whisking…\n─\n❯\n─\n" if not with_ansi else "❯\n"
+        if target == "x:0.0":  # claude busy
+            return "  ✽ Whisking…\n─\n❯\n─\n"
+        # codex busy: Working(…) line + composer footer
+        return (
+            " Working (3s • Esc to interrupt)\n"
+            "▌\n"
+            " ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit\n"
+        )
 
     with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
         with patch("lib.tmux_scanner.capture_pane", side_effect=fake_capture):
@@ -78,9 +86,31 @@ def test_scan_panes_attaches_state_for_claude_only():
 
     by_proc = {w["process"]: w for w in workers}
     assert by_proc["claude"]["state"] == "busy"
-    # codex is not in allowed_processes default, and window_name doesn't match
-    # — should be dropped by the defensive `continue` branch.
-    assert "codex" not in by_proc
+    # codex must now be classified (not dropped) and routed to the codex detector.
+    assert by_proc["codex"]["state"] == "busy"
+
+
+def test_scan_panes_codex_idle_pane_classified_idle():
+    """A codex pane showing only its idle footer (composer visible, no Working
+    line) classifies as idle — the footer alone is never a busy signal."""
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [
+        PaneInfo(pid="1", process="codex", target="x:0.0", cwd="/r", window_name="w"),
+    ]
+
+    def fake_capture(target: str, with_ansi: bool):
+        return (
+            "▌ Improve documentation in @filename\n"
+            " ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit\n"
+        )
+
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", side_effect=fake_capture):
+            workers = scan_panes()
+
+    assert workers[0]["process"] == "codex"
+    assert workers[0]["state"] == "idle"
 
 
 def test_scan_panes_window_name_marked_pane_shows_unknown_when_no_claude_marker():

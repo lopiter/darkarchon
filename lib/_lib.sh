@@ -50,6 +50,16 @@ worker_role() {
     echo "${!var:-}"
 }
 
+# worker_kind <name>  -> echoes WORKER_<safe_name>_KIND, defaulting to "claude".
+# Pre-existing registrations have no _KIND slot, so absence means claude — this
+# keeps the claude dispatch/detection paths unchanged for legacy workers.
+worker_kind() {
+    local sn
+    sn="$(safe_name "$1")"
+    local var="WORKER_${sn}_KIND"
+    echo "${!var:-claude}"
+}
+
 # worker_is_external <name>  -> exit 0 if EXTERNAL=1, else 1
 worker_is_external() {
     local sn
@@ -95,5 +105,28 @@ all_known_workers() {
         sn="${sn%_TARGET}"
         local name_var="WORKER_${sn}_NAME"
         echo "${!name_var:-$sn}"
+    done | sort -u
+}
+
+# workers_sharing_dir <dir> [<exclude_name>] — print names of registered workers
+# whose cwd (WORKER_<sn>_DIR) equals <dir>, excluding <exclude_name> if given.
+# Used for cwd-collision warnings (spawn/invite) and dispatch serialization
+# (dispatch-safe refuses when a same-cwd peer is busy) so a claude and a codex
+# worker on the same repo don't edit the working tree concurrently.
+workers_sharing_dir() {
+    local target_dir="$1"
+    local exclude="${2:-}"
+    [ -z "$target_dir" ] && return 0
+    local exclude_sn=""
+    [ -n "$exclude" ] && exclude_sn="$(safe_name "$exclude")"
+    local v
+    for v in $(compgen -v 2>/dev/null | grep -E '^WORKER_[A-Za-z0-9_]+_DIR$'); do
+        local sn="${v#WORKER_}"
+        sn="${sn%_DIR}"
+        [ -n "$exclude_sn" ] && [ "$sn" = "$exclude_sn" ] && continue
+        if [ "${!v:-}" = "$target_dir" ]; then
+            local name_var="WORKER_${sn}_NAME"
+            echo "${!name_var:-$sn}"
+        fi
     done | sort -u
 }

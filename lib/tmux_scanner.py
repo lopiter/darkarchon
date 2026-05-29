@@ -11,18 +11,33 @@ import subprocess
 from dataclasses import dataclass
 
 from lib.detectors.claude import classify_claude_state
+from lib.detectors.codex import classify_codex_state
 
 # Some LLM CLIs (notably Claude Code on macOS) appear in tmux's pane_current_command
 # not as their CLI name but as the underlying runtime's version string, e.g. "2.1.148"
 # for Node.js. Treat such panes as candidates and verify by capture content.
 _NODE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-\S+)?$")
 _CLAUDE_CANDIDATE_PROCS = {"claude", "node"}
+# codex is a native binary, so its pane_current_command is just "codex".
+_CODEX_CANDIDATE_PROCS = {"codex"}
+# codex TUI footer/status substrings (ASCII only — composer/footer glyphs vary).
+_CODEX_MARKERS = ("Working (", "Esc to interrupt", "⏎ send", "⌃J newline", "⌃T transcript")
 
 
 def _looks_like_claude_candidate(process: str) -> bool:
     if process in _CLAUDE_CANDIDATE_PROCS:
         return True
     return bool(_NODE_VERSION_RE.match(process))
+
+
+def _looks_like_codex_candidate(process: str) -> bool:
+    return process in _CODEX_CANDIDATE_PROCS
+
+
+def _has_codex_marker(plain: str) -> bool:
+    hits = sum(1 for m in _CODEX_MARKERS if m in plain)
+    # footer shows several markers at once; "Working (" alone is enough mid-task.
+    return "Working (" in plain or "Esc to interrupt" in plain or hits >= 2
 
 
 @dataclass
@@ -44,7 +59,7 @@ def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
 
 
 def list_llm_panes(
-    allowed_processes: tuple[str, ...] = ("claude",),
+    allowed_processes: tuple[str, ...] = ("claude", "codex"),
     window_names: tuple[str, ...] = ("claude",),
 ) -> list[PaneInfo]:
     """Enumerate all tmux panes and filter to LLM candidates.
@@ -93,18 +108,20 @@ def capture_pane(target: str, with_ansi: bool = False) -> str:
 
 
 def scan_panes(
-    allowed_processes: tuple[str, ...] = ("claude",),
+    allowed_processes: tuple[str, ...] = ("claude", "codex"),
     window_names: tuple[str, ...] = ("claude",),
 ) -> list[dict]:
     """Scan all LLM panes on this host and return state-annotated worker dicts.
 
-    Two-signal discovery:
-      1. Explicit — pane's tmux window_name is in `window_names`. User intent.
-         Trusts the marking; classifies via Claude detector if marker present,
-         else reports as 'unknown' (could be codex/gemini/etc).
-      2. Implicit — pane's process name matches `allowed_processes` or a Node
-         version string. Requires Claude TUI marker to confirm; otherwise the
-         pane is dropped to avoid false positives on unrelated node panes.
+    Discovery + kind routing:
+      1. codex process — classified via the codex detector (Working(…) busy line,
+         footer for idle, auth/stream error). codex's prompt structure differs
+         from Claude's, so it must NOT go through the Claude detector.
+      2. Explicit — pane's tmux window_name is in `window_names`. User intent.
+         Routes to the Claude or codex detector by which TUI marker is present,
+         else reports 'unknown'.
+      3. Implicit (claude/node) — requires a Claude TUI marker to confirm;
+         otherwise dropped to avoid false positives on unrelated node panes.
 
     Returned shape per pane:
         {
@@ -124,25 +141,42 @@ def scan_panes(
         plain = capture_pane(p.target, with_ansi=False)
         ansi = capture_pane(p.target, with_ansi=True)
         has_claude_marker = "❯" in plain or "─" in plain
+        has_codex_marker = _has_codex_marker(plain)
 
         explicit = p.window_name in window_names
-        implicit = _looks_like_claude_candidate(p.process)
+        claude_proc = _looks_like_claude_candidate(p.process)
+        codex_proc = _looks_like_codex_candidate(p.process)
 
-        if explicit:
-            # User-marked window — trust the intent.
+        if codex_proc:
+            # Process is literally `codex` — trust it and use the codex detector.
+            # (codex panes can briefly show none of the markers while booting;
+            # the codex detector treats that as idle, which is safe.)
+            state = classify_codex_state(plain, ansi)
+            effective_process = "codex"
+        elif explicit:
+            # User-marked window — trust the intent, route by which TUI is present.
             if has_claude_marker:
                 state = classify_claude_state(plain, ansi)
                 effective_process = "claude"
+            elif has_codex_marker:
+                state = classify_codex_state(plain, ansi)
+                effective_process = "codex"
             else:
-                # Marked but no Claude TUI (could be codex/gemini/etc) — show as unknown.
+                # Marked but no recognizable TUI — show as unknown.
                 state = {"state": "unknown", "detail": f"window={p.window_name}"}
                 effective_process = p.window_name
-        elif implicit:
-            # Auto-discovered by process name — require marker to avoid false positives.
-            if not has_claude_marker:
-                continue  # not actually Claude — drop
-            state = classify_claude_state(plain, ansi)
-            effective_process = "claude"
+        elif claude_proc:
+            # Auto-discovered by process name — require a marker to avoid false
+            # positives on unrelated node panes. A codex marker here is unlikely
+            # (claude/node process) but route correctly if it somehow appears.
+            if has_claude_marker:
+                state = classify_claude_state(plain, ansi)
+                effective_process = "claude"
+            elif has_codex_marker:
+                state = classify_codex_state(plain, ansi)
+                effective_process = "codex"
+            else:
+                continue  # not actually an LLM TUI — drop
         else:
             # Shouldn't happen given the filter, but be defensive.
             continue

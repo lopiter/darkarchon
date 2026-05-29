@@ -50,6 +50,9 @@ if [ -z "$TARGET" ]; then
     exit 1
 fi
 
+# Agent flavor drives send-keys style + completion detection below.
+KIND="$(worker_kind "$WORKER")"
+
 # Verify session exists
 if ! tmux has-session -t "=${TARGET%%:*}" 2>/dev/null; then
     echo "ERROR: tmux session '${TARGET%%:*}' is not running." >&2
@@ -142,10 +145,22 @@ if [ "${#TRIGGER}" -gt 199 ]; then
     exit 1
 fi
 
-# Send via tmux send-keys (single short line, no embedded newlines)
-tmux send-keys -t "=$TARGET" "$TRIGGER"
-sleep 0.6
-tmux send-keys -t "=$TARGET" Enter
+# Send via tmux send-keys (single short line, no embedded newlines).
+if [ "$KIND" = "codex" ]; then
+    # codex needs literal mode: `-l` stops tmux interpreting words like "Enter"
+    # as key names, `--` guards a message starting with `-`. codex's TUI also
+    # occasionally swallows the first Enter, so we double-press; an empty second
+    # submit is a harmless no-op on the codex composer.
+    tmux send-keys -t "=$TARGET" -l -- "$TRIGGER"
+    sleep 0.2
+    tmux send-keys -t "=$TARGET" Enter
+    sleep 0.2
+    tmux send-keys -t "=$TARGET" Enter
+else
+    tmux send-keys -t "=$TARGET" "$TRIGGER"
+    sleep 0.6
+    tmux send-keys -t "=$TARGET" Enter
+fi
 
 update_status running
 
@@ -160,31 +175,46 @@ while true; do
         exit 2
     fi
 
-    # Just look for DONE marker in pane. We need it to appear at least twice
-    # (echo of trigger + worker's actual output) to know the worker actually
-    # produced it, not just our trigger echo.
-    PANE="$(tmux capture-pane -p -J -t "=$TARGET" -S -2000 2>/dev/null || true)"
-    occurrences=$(grep -cF "$DONE_MARKER" <<<"$PANE" || true)
-    if [ "${occurrences:-0}" -ge 2 ]; then
-        # Worker has printed the marker. Give the filesystem a brief moment to
-        # ensure the Write tool finished flushing.
-        sleep 1
-        if [ ! -s "$RESULT_FILE" ]; then
-            # File missing or empty even though marker shown — sometimes Write
-            # comes microseconds after; retry once.
-            sleep 2
+    if [ "$KIND" = "codex" ]; then
+        # codex completion is detected by the RESULT FILE, not the stdout marker:
+        # codex's alternate-screen + line wrapping makes pane marker-counting
+        # unreliable (per omc). The worker writes r-<id>.txt as its last step, so a
+        # non-empty file is the authoritative "done" signal.
+        if [ -s "$RESULT_FILE" ]; then
+            sleep 1  # let the Write flush fully before reading
+            RESULT="$(cat "$RESULT_FILE")"
+            RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"
+            set_result "$RESULT"
+            printf '%s\n' "$RESULT"
+            exit 0
         fi
-        if [ ! -s "$RESULT_FILE" ]; then
-            set_error "DONE marker observed but result file missing or empty" failed
-            echo "PARSE_ERROR: $TASK_ID (no result at $RESULT_FILE)" >&2
-            exit 3
+    else
+        # claude: look for DONE marker in pane. We need it to appear at least twice
+        # (echo of trigger + worker's actual output) to know the worker actually
+        # produced it, not just our trigger echo.
+        PANE="$(tmux capture-pane -p -J -t "=$TARGET" -S -2000 2>/dev/null || true)"
+        occurrences=$(grep -cF "$DONE_MARKER" <<<"$PANE" || true)
+        if [ "${occurrences:-0}" -ge 2 ]; then
+            # Worker has printed the marker. Give the filesystem a brief moment to
+            # ensure the Write tool finished flushing.
+            sleep 1
+            if [ ! -s "$RESULT_FILE" ]; then
+                # File missing or empty even though marker shown — sometimes Write
+                # comes microseconds after; retry once.
+                sleep 2
+            fi
+            if [ ! -s "$RESULT_FILE" ]; then
+                set_error "DONE marker observed but result file missing or empty" failed
+                echo "PARSE_ERROR: $TASK_ID (no result at $RESULT_FILE)" >&2
+                exit 3
+            fi
+            RESULT="$(cat "$RESULT_FILE")"
+            # Strip trailing whitespace/newlines for clean output
+            RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"
+            set_result "$RESULT"
+            printf '%s\n' "$RESULT"
+            exit 0
         fi
-        RESULT="$(cat "$RESULT_FILE")"
-        # Strip trailing whitespace/newlines for clean output
-        RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"
-        set_result "$RESULT"
-        printf '%s\n' "$RESULT"
-        exit 0
     fi
     sleep "${POLL_INTERVAL:-3}"
 done

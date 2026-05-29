@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# dispatch-safe.sh — Dispatch only when worker pane is idle.
+# dispatch-safe.sh — Dispatch only when the worker (and any same-cwd peer) is idle.
 #
-# Pre-flight check: capture pane, look for busy/thinking markers from
-# Claude Code TUI. If busy (whether processing a previous dispatch OR
-# handling user direct input), refuse with a status report. If idle,
-# delegate to lib/dispatch.sh transparently.
+# Pre-flight checks before delegating to lib/dispatch.sh:
+#   1. Target worker busy? (kind-aware: Claude spinner vs codex "Working (…)" line)
+#   2. codex worker showing an auth/stream error? (can't make progress → refuse)
+#   3. claude worker has typed-but-unsent user input on the prompt line?
+#   4. A *different* worker sharing the same cwd is busy? (serialize edits so a
+#      claude and a codex worker on one repo don't race on the git working tree)
 #
 # Usage (drop-in replacement for lib/dispatch.sh):
 #   dispatch-safe.sh <worker> <prompt...>
 #   echo 'long prompt' | dispatch-safe.sh <worker> -
 #
 # Exit codes:
-#   0    success — dispatched and completed (lib/dispatch.sh exit code)
-#   10   refused — worker busy (won't dispatch, user must wait or interrupt)
-#   11   refused — pane content shows possible user-typed input pending
+#   0      success — dispatched and completed (lib/dispatch.sh exit code)
+#   10     refused — worker busy (won't dispatch, user must wait or interrupt)
+#   11     refused — pane content shows possible user-typed input pending (claude)
+#   12     refused — codex worker shows auth/stream error (run `codex login`)
+#   13     refused — a same-cwd peer worker is busy (serialized to protect the tree)
 #   1/2/3  passthrough from lib/dispatch.sh (bad args / timeout / parse error)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,31 +44,58 @@ if ! tmux has-session -t "=${TARGET%%:*}" 2>/dev/null; then
     exit 1
 fi
 
-# Capture the visible viewport (full pane content). Use whole pane rather than
-# `tail -N` because fresh workers have blank lines at bottom that would strip
-# to empty under bash command substitution.
+KIND="$(worker_kind "$WORKER")"
+
+# ─── Detection patterns (per kind) ──────────────────────────────────────────
+# Claude active-state markers (only present DURING current work): spinner glyph
+# + localized gerund ("✽ Whisking…", "★ 작성 중 …"), or "still running".
+CLAUDE_ACTIVE_PATTERN='[★✽✻][[:space:]].*([A-Za-z]+(ing|ling|ning)|중[[:space:]]*)…|still running'
+# Codex busy marker: the "Working (<N>s • Esc to interrupt)" status line. ASCII
+# substrings only (codex composer/footer glyphs ▌ ⏎ vary; don't rely on them).
+CODEX_BUSY_PATTERN='Working[[:space:]]*\([0-9]+[[:space:]]*s|[Ee]sc to interrupt'
+# Codex auth/stream failure: token expired or stream error → can't progress.
+CODEX_AUTH_PATTERN='Failed to refresh token|401 Unauthorized|stream error'
+
+# pane_status <target> <kind> → prints one of: "busy" | "auth" | "" (idle/unknown).
+# Captures only the visible screen (no -S); codex uses the alternate screen and
+# claude's status line is at the bottom either way.
+pane_status() {
+    local target="$1" kind="$2" pane tail
+    pane="$(tmux capture-pane -p -t "=$target" 2>/dev/null || true)"
+    [ -z "$pane" ] && { echo ""; return 0; }
+    tail="$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$' | tail -15)"
+    if [ "$kind" = "codex" ]; then
+        if echo "$tail" | grep -qE "$CODEX_AUTH_PATTERN"; then echo "auth"; return 0; fi
+        if echo "$tail" | grep -qE "$CODEX_BUSY_PATTERN"; then echo "busy"; return 0; fi
+    else
+        if echo "$tail" | grep -qE "$CLAUDE_ACTIVE_PATTERN"; then echo "busy"; return 0; fi
+    fi
+    echo ""
+}
+
+# ─── Check 1/2: target worker self-state ────────────────────────────────────
 PANE_TAIL="$(tmux capture-pane -p -t "=$TARGET" 2>/dev/null || true)"
 if [ -z "$PANE_TAIL" ]; then
     echo "ERROR: failed to capture pane $TARGET (worker not running?)" >&2
     exit 1
 fi
-# Trim trailing blank lines and keep only the meaningful bottom portion (last 15 lines)
 PANE_TAIL="$(printf '%s\n' "$PANE_TAIL" | grep -v '^[[:space:]]*$' | tail -15)"
 
-# Active-state markers (only present DURING current work):
-#   - spinner glyph + label + ellipsis → e.g. "✽ Whisking…", "★ 작성 중 …"
-#     Claude Code TUI localizes the verb based on user language, so we
-#     accept both English "-ing…" and Korean "중 …" endings. The glyph
-#     varies across versions (✽ ✻ ★ etc.), so we allow any of the
-#     known active glyphs.
-#     (✻ alone with past tense like "✻ Cooked for 32s" is a COMPLETED
-#      indicator — the regex requires the trailing ellipsis to avoid this.)
-#   - "still running" → background commands actively executing
-# Note: "thinking" in OMC status line is sticky/unreliable — not used.
-ACTIVE_PATTERN='[★✽✻][[:space:]].*([A-Za-z]+(ing|ling|ning)|중[[:space:]]*)…|still running'
-
-if echo "$PANE_TAIL" | grep -qE "$ACTIVE_PATTERN"; then
-    matched=$(echo "$PANE_TAIL" | grep -oE "$ACTIVE_PATTERN" | sort -u | tr '\n' ',' | sed 's/,$//')
+SELF_STATUS="$(pane_status "$TARGET" "$KIND")"
+if [ "$SELF_STATUS" = "auth" ]; then
+    echo "REFUSED: codex worker '$WORKER' ($TARGET) shows an auth/stream error." >&2
+    echo "  recent pane (last 5 lines):" >&2
+    echo "$PANE_TAIL" | tail -5 | sed 's/^/    /' >&2
+    echo >&2
+    echo "  codex 토큰이 만료/미로그인 상태로 보입니다. 'codex login' (또는 OPENAI_API_KEY) 후 다시 시도해주세요." >&2
+    exit 12
+fi
+if [ "$SELF_STATUS" = "busy" ]; then
+    if [ "$KIND" = "codex" ]; then
+        matched=$(echo "$PANE_TAIL" | grep -oE "$CODEX_BUSY_PATTERN" | sort -u | tr '\n' ',' | sed 's/,$//')
+    else
+        matched=$(echo "$PANE_TAIL" | grep -oE "$CLAUDE_ACTIVE_PATTERN" | sort -u | tr '\n' ',' | sed 's/,$//')
+    fi
     echo "REFUSED: worker '$WORKER' ($TARGET) appears actively processing." >&2
     echo "  matched markers: $matched" >&2
     echo "  recent pane (last 5 lines):" >&2
@@ -75,39 +106,65 @@ if echo "$PANE_TAIL" | grep -qE "$ACTIVE_PATTERN"; then
     exit 10
 fi
 
-# ─── Check 2: typed-but-unsent user input on prompt line ────────────────
-# Capture WITH escape codes (-e) so we can distinguish placeholder/autocomplete
-# (rendered with \x1b[7m reverse + \x1b[2m dim) from real user typing (plain).
-PANE_E="$(tmux capture-pane -e -p -t "=$TARGET" -S -8 2>/dev/null | tail -8 || true)"
-# Find prompt line (contains ❯ / U+276F)
-PROMPT_LINE="$(echo "$PANE_E" | grep -F $'\xe2\x9d\xaf' | tail -1 || true)"
+# ─── Check 3: typed-but-unsent user input (claude only) ─────────────────────
+# Codex keeps its composer (▌) and footer visible at all times and uses a
+# different prompt structure, so the ❯-based heuristic doesn't apply — skip it.
+if [ "$KIND" != "codex" ]; then
+    # Capture WITH escape codes (-e) so we can distinguish placeholder/autocomplete
+    # (rendered with \x1b[7m reverse + \x1b[2m dim) from real user typing (plain).
+    PANE_E="$(tmux capture-pane -e -p -t "=$TARGET" -S -8 2>/dev/null | tail -8 || true)"
+    # Find prompt line (contains ❯ / U+276F)
+    PROMPT_LINE="$(echo "$PANE_E" | grep -F $'\xe2\x9d\xaf' | tail -1 || true)"
 
-if [ -n "$PROMPT_LINE" ]; then
-    # Strip everything up to and including "❯ " (prompt + one space)
-    AFTER_PROMPT="${PROMPT_LINE#*$'\xe2\x9d\xaf'}"
-    AFTER_PROMPT="${AFTER_PROMPT# }"
-    # Plain content (no escape codes)
-    PLAIN="$(printf '%s' "$AFTER_PROMPT" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
-    # Trim whitespace
-    PLAIN_TRIMMED="$(printf '%s' "$PLAIN" | tr -d '[:space:]')"
+    if [ -n "$PROMPT_LINE" ]; then
+        # Strip everything up to and including "❯ " (prompt + one space)
+        AFTER_PROMPT="${PROMPT_LINE#*$'\xe2\x9d\xaf'}"
+        AFTER_PROMPT="${AFTER_PROMPT# }"
+        # Plain content (no escape codes)
+        PLAIN="$(printf '%s' "$AFTER_PROMPT" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+        # Trim whitespace
+        PLAIN_TRIMMED="$(printf '%s' "$PLAIN" | tr -d '[:space:]')"
 
-    if [ -n "$PLAIN_TRIMMED" ]; then
-        # Content present. Distinguish placeholder vs user input:
-        #   - placeholder/autocomplete: rendered with \x1b[2m (dim) — e.g. "Try '...'" or
-        #     a recalled previous command shown in faint text
-        #   - user typed text: NO dim styling. Cursor highlight (\x1b[7m reverse) may exist
-        #     at end of line but isn't dim — so checking only [2m is the reliable signal.
-        if printf '%s' "$AFTER_PROMPT" | grep -qE $'\x1b\\[(2|0;2)m'; then
-            # Dim styling present — placeholder/autocomplete → treat as idle
-            :
-        else
-            echo "REFUSED: worker '$WORKER' ($TARGET) prompt line has unsent user input." >&2
-            echo "  prompt content: $PLAIN" >&2
-            echo >&2
-            echo "  사용자가 워커에 직접 입력 중인 것으로 보입니다. Enter 로 보내거나 지운 뒤 다시 시도해주세요." >&2
-            exit 11
+        if [ -n "$PLAIN_TRIMMED" ]; then
+            # Content present. Distinguish placeholder vs user input:
+            #   - placeholder/autocomplete: rendered with \x1b[2m (dim)
+            #   - user typed text: NO dim styling.
+            if printf '%s' "$AFTER_PROMPT" | grep -qE $'\x1b\\[(2|0;2)m'; then
+                # Dim styling present — placeholder/autocomplete → treat as idle
+                :
+            else
+                echo "REFUSED: worker '$WORKER' ($TARGET) prompt line has unsent user input." >&2
+                echo "  prompt content: $PLAIN" >&2
+                echo >&2
+                echo "  사용자가 워커에 직접 입력 중인 것으로 보입니다. Enter 로 보내거나 지운 뒤 다시 시도해주세요." >&2
+                exit 11
+            fi
         fi
     fi
+fi
+
+# ─── Check 4: same-cwd peer serialization ───────────────────────────────────
+# If a *different* worker shares this worker's cwd and is currently busy, refuse:
+# two agents editing one git working tree concurrently corrupts each other's
+# edits (.git/index.lock contention, half-applied changes). Serializing here is
+# the runtime half of the cwd guard (spawn/invite emit a warning at registration).
+SELF_DIR="$(worker_dir "$WORKER")"
+if [ -n "$SELF_DIR" ]; then
+    while IFS= read -r PEER; do
+        [ -z "$PEER" ] && continue
+        PEER_TARGET="$(worker_target "$PEER")"
+        [ -z "$PEER_TARGET" ] && continue
+        tmux has-session -t "=${PEER_TARGET%%:*}" 2>/dev/null || continue
+        PEER_KIND="$(worker_kind "$PEER")"
+        if [ "$(pane_status "$PEER_TARGET" "$PEER_KIND")" = "busy" ]; then
+            echo "REFUSED: peer worker '$PEER' ($PEER_TARGET) shares cwd and is busy." >&2
+            echo "  cwd: $SELF_DIR" >&2
+            echo >&2
+            echo "  같은 repo를 쓰는 다른 워커가 작업 중입니다. git 워킹트리 충돌을 막기 위해" >&2
+            echo "  dispatch 를 직렬화합니다 — '$PEER' 가 끝난 뒤 다시 시도해주세요." >&2
+            exit 13
+        fi
+    done < <(workers_sharing_dir "$SELF_DIR" "$WORKER")
 fi
 
 # Idle — delegate to real dispatch.sh

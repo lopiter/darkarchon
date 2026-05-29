@@ -37,7 +37,7 @@ class AgentConfig:
     hub_url: str
     host_id: str
     registry_path: Path
-    llm_processes: tuple[str, ...] = ("claude",)
+    llm_processes: tuple[str, ...] = ("claude", "codex")
     llm_window_names: tuple[str, ...] = ("claude",)
     interval_seconds: float = 5.0
     request_timeout: float = 3.0
@@ -160,7 +160,7 @@ def main():
         default_registry = str(Path(_default_config_dir) / "workers-runtime.env")
     registry = args.registry or (Path(default_registry) if default_registry else Path("/dev/null"))
     interval = args.interval if args.interval else float(file_cfg.get("INTERVAL", "5"))
-    llm_processes = tuple((file_cfg.get("LLM_PROCESSES") or "claude").split(","))
+    llm_processes = tuple((file_cfg.get("LLM_PROCESSES") or "claude,codex").split(","))
     llm_window_names = tuple((file_cfg.get("LLM_WINDOWS") or "claude").split(","))
 
     cfg = AgentConfig(
