@@ -47,9 +47,14 @@ fi
 KIND="$(worker_kind "$WORKER")"
 
 # ─── Detection patterns (per kind) ──────────────────────────────────────────
-# Claude active-state markers (only present DURING current work): spinner glyph
-# + localized gerund ("✽ Whisking…", "★ 작성 중 …"), or "still running".
-CLAUDE_ACTIVE_PATTERN='[★✽✻][[:space:]].*([A-Za-z]+(ing|ling|ning)|중[[:space:]]*)…|still running'
+# Claude active-state markers (only present DURING current work): the localized
+# gerund + ellipsis ("Whisking…", "작성 중 …"), or "still running". We do NOT gate
+# on the spinner glyph: Claude Code cycles through many glyphs (· ✢ ✳ ✶ ✽ ✻ ★ …),
+# so requiring a fixed set false-negatives whenever the captured frame shows a
+# different glyph (e.g. "· Meandering…") — that misclassifies a busy worker as
+# idle. The trailing … (U+2026, not "...") keeps this off non-spinner text.
+# Mirrors detectors/claude.py's BUSY_PATTERN.
+CLAUDE_ACTIVE_PATTERN='([A-Za-z]+(ing|ling|ning)|중[[:space:]]*)…|still running'
 # Codex busy marker: the "Working (<N>s • Esc to interrupt)" status line. ASCII
 # substrings only (codex composer/footer glyphs ▌ ⏎ vary; don't rely on them).
 CODEX_BUSY_PATTERN='Working[[:space:]]*\([0-9]+[[:space:]]*s|[Ee]sc to interrupt'
