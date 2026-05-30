@@ -2,7 +2,9 @@
 
 The dashboard hub keeps no DB — host reports are POSTed in, stored in a dict,
 and served back on GET. Stale hosts (no heartbeat for N seconds) have their
-workers marked dead.
+workers marked dead; hosts silent past `evict_after_seconds` are dropped
+entirely so a long-gone PC disappears from the dashboard instead of
+lingering forever (DESIGN.md §7.2 "5분 후 dead 숨김").
 """
 
 from __future__ import annotations
@@ -13,10 +15,24 @@ from typing import Iterable
 
 
 class HostStateStore:
-    def __init__(self, stale_after_seconds: float = 30.0):
+    def __init__(
+        self,
+        stale_after_seconds: float = 30.0,
+        evict_after_seconds: float = 300.0,
+    ):
         self._stale_after = stale_after_seconds
+        self._evict_after = evict_after_seconds
         self._hosts: dict[str, dict] = {}  # host_id → {last_seen, workers}
         self._lock = threading.Lock()
+
+    def _evict_expired(self, now: float) -> None:
+        """Drop hosts silent past evict_after. Caller must hold the lock."""
+        dead = [
+            h for h, info in self._hosts.items()
+            if (now - info["last_seen"]) > self._evict_after
+        ]
+        for h in dead:
+            del self._hosts[h]
 
     def update_host(self, host_id: str, workers: list[dict]) -> Iterable[dict]:
         """Replace this host's workers list. Yield events for state transitions."""
@@ -47,6 +63,7 @@ class HostStateStore:
         now = time.time()
         out: list[dict] = []
         with self._lock:
+            self._evict_expired(now)
             for host_id, info in self._hosts.items():
                 is_stale = (now - info["last_seen"]) > self._stale_after
                 for w in info["workers"]:
@@ -61,6 +78,7 @@ class HostStateStore:
         """Return host-level summary."""
         now = time.time()
         with self._lock:
+            self._evict_expired(now)
             return [
                 {
                     "host_id": h,

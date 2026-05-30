@@ -44,6 +44,48 @@ def test_stale_host_marked_dead_in_get_all_workers(monkeypatch):
     assert all(w["state"] == "dead" for w in workers)
 
 
+def test_stale_host_still_present_before_evict_window(monkeypatch):
+    """Between stale_after and evict_after the host stays, shown as dead."""
+    store = HostStateStore(stale_after_seconds=2, evict_after_seconds=300)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    store.update_host("remote-pc", workers=[{"name": "w1", "state": "idle"}])
+    fake_now[0] += 30  # past stale_after(2) but well under evict_after(300)
+    workers = store.get_all_workers()
+    assert len(workers) == 1
+    assert workers[0]["state"] == "dead"
+    assert any(h["host_id"] == "remote-pc" for h in store.get_hosts())
+
+
+def test_host_evicted_after_evict_window(monkeypatch):
+    """A host silent past evict_after disappears entirely from store reads."""
+    store = HostStateStore(stale_after_seconds=2, evict_after_seconds=300)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    store.update_host("remote-pc", workers=[{"name": "w1", "state": "idle"}])
+    fake_now[0] += 301  # exceeds evict_after=300
+    assert store.get_all_workers() == []
+    assert store.get_hosts() == []
+
+
+def test_evicted_host_can_rejoin_fresh(monkeypatch):
+    """After eviction, a new POST re-registers the host as fresh (not dead)."""
+    store = HostStateStore(stale_after_seconds=2, evict_after_seconds=300)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    store.update_host("remote-pc", workers=[{"name": "w1", "state": "idle"}])
+    fake_now[0] += 301
+    assert store.get_all_workers() == []  # evicted
+
+    store.update_host("remote-pc", workers=[{"name": "w1", "state": "idle"}])
+    workers = store.get_all_workers()
+    assert len(workers) == 1
+    assert workers[0]["state"] == "idle"  # fresh, not carried-over dead
+
+
 def test_emit_state_change_events():
     """When a worker transitions from busy → idle, store yields an event."""
     store = HostStateStore(stale_after_seconds=60)

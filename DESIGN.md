@@ -536,6 +536,10 @@ PC 안 tmux 스캔 ───┘                     │
 ### 9.2 hub 저장
 - in-memory 저장 (영구 저장 안 함)
 - 워커 상태, 최근 출력 tail (마지막 N줄), dispatch 큐, mailbox
+- **host eviction**: agent POST 가 끊긴 host 는 `stale_after`(기본 30s) 후
+  워커가 `dead` 로 표시되고, `evict_after`(기본 300s) 를 넘기면 hub 메모리
+  (`_hosts`)에서 완전히 제거되어 대시보드에서 사라짐. agent 가 다시 POST 하면
+  fresh 로 재등록. (§7.2 "5분 후 dead 숨김" 의 host 단위 대응)
 
 ### 9.3 보안
 - 같은 LAN에서만 작동 (외부 노출 안 함)
