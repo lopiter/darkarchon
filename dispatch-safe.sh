@@ -9,13 +9,20 @@
 #      claude and a codex worker on one repo don't race on the git working tree)
 #
 # Usage (drop-in replacement for lib/dispatch.sh):
-#   dispatch-safe.sh <worker> <prompt...>
-#   echo 'long prompt' | dispatch-safe.sh <worker> -
+#   dispatch-safe.sh [--force] <worker> <prompt...>
+#   echo 'long prompt' | dispatch-safe.sh [--force] <worker> -
+#
+# --force: skip Check 3 AND, for claude workers, blast BSpaces to wipe the
+# prompt line before sending the trigger. Use when you know the "typed" text
+# is not real user input (e.g. Claude Code's recap-suggested next prompt or
+# autocomplete ghost text that the dim-style heuristic missed). Trade-off:
+# real user-typed input would be clobbered — caller's responsibility.
 #
 # Exit codes:
 #   0      success — dispatched and completed (lib/dispatch.sh exit code)
 #   10     refused — worker busy (won't dispatch, user must wait or interrupt)
-#   11     refused — pane content shows possible user-typed input pending (claude)
+#   11     refused — pane content shows possible user-typed input pending (claude;
+#                     suppressed by --force)
 #   12     refused — codex worker shows auth/stream error (run `codex login`)
 #   13     refused — a same-cwd peer worker is busy (serialized to protect the tree)
 #   1/2/3  passthrough from lib/dispatch.sh (bad args / timeout / parse error)
@@ -24,9 +31,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib/_lib.sh"
 
+# Optional leading --force: skip the claude typed-input check (Check 3) AND
+# blast BSpaces to wipe any ghost text / autocomplete on the prompt line before
+# delegating. See header comment for the trade-off.
+FORCE=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --force|--force-clear) FORCE=1; shift ;;
+        --) shift; break ;;
+        -*) echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
+
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 <worker> <prompt...>" >&2
-    echo "       echo 'long prompt' | $0 <worker> -" >&2
+    echo "Usage: $0 [--force] <worker> <prompt...>" >&2
+    echo "       echo 'long prompt' | $0 [--force] <worker> -" >&2
     exit 1
 fi
 
@@ -114,7 +134,8 @@ fi
 # ─── Check 3: typed-but-unsent user input (claude only) ─────────────────────
 # Codex keeps its composer (▌) and footer visible at all times and uses a
 # different prompt structure, so the ❯-based heuristic doesn't apply — skip it.
-if [ "$KIND" != "codex" ]; then
+# --force skips this check entirely (caller asserted the text isn't real input).
+if [ "$KIND" != "codex" ] && [ "$FORCE" -eq 0 ]; then
     # Capture WITH escape codes (-e) so we can distinguish placeholder/autocomplete
     # (rendered with \x1b[7m reverse + \x1b[2m dim) from real user typing (plain).
     PANE_E="$(tmux capture-pane -e -p -t "=$TARGET" -S -8 2>/dev/null | tail -8 || true)"
@@ -170,6 +191,22 @@ if [ -n "$SELF_DIR" ]; then
             exit 13
         fi
     done < <(workers_sharing_dir "$SELF_DIR" "$WORKER")
+fi
+
+# --force pre-clear (claude only): blast BSpaces to wipe any ghost text /
+# autocomplete on the prompt line before the trigger is sent. We do NOT verify
+# via capture-pane afterwards — Claude Code TUI rendering vs. tmux's capture
+# snapshot can lag for seconds, so a single-capture verify deadlocks orchestrators
+# that read it. Trust the keystrokes: 200 BSpaces erase any realistic prompt
+# input; an empty prompt swallows extra BSpaces harmlessly. C-u/C-k first as a
+# readline-style fast-clear that some Claude Code versions honor.
+if [ "$FORCE" -eq 1 ] && [ "$KIND" != "codex" ]; then
+    tmux send-keys -t "=$TARGET" C-u C-k 2>/dev/null || true
+    BSP_ARGS=""
+    for _ in $(seq 1 200); do BSP_ARGS="$BSP_ARGS BSpace"; done
+    # shellcheck disable=SC2086
+    tmux send-keys -t "=$TARGET" $BSP_ARGS 2>/dev/null || true
+    sleep 0.4   # let the TUI process the burst before dispatch sends the trigger
 fi
 
 # Idle — delegate to real dispatch.sh
