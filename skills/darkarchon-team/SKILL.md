@@ -63,12 +63,21 @@ $DARKARCHON_HOME/invite-worker.sh [--kind claude|codex] <name> <session:window> 
 
 **Dispatch a task / ask a worker:**
 ```bash
-$DARKARCHON_HOME/dispatch-safe.sh <name> '<task description>'
+$DARKARCHON_HOME/dispatch-safe.sh [--force] <name> '<task description>'
 ```
-- Refuses (non-zero exit) if the worker is busy, or if another worker **sharing
-  its cwd** is busy (dispatches to the same repo are serialized so two agents
-  don't edit the working tree at once). Retry once it's idle.
+- Refuses (non-zero exit) when the worker is busy, when another worker
+  **sharing its cwd** is busy (same-repo dispatches are serialized so two
+  agents don't edit the working tree at once), or when the prompt line looks
+  like it has unsent user input. Retry once it's idle.
+- **`--force`**: when the "unsent input" refusal is actually a Claude Code
+  recap-suggestion or autocomplete ghost text (not a real user keystroke),
+  pass `--force` to wipe the prompt line (BSpace burst) and dispatch anyway.
+  Real user-typed text would be clobbered — only force when you've ruled that
+  out. If the user is actively chatting with the worker, ask them to detach
+  first instead.
 - The result is printed to stdout when the worker finishes.
+- tmux's `capture-pane` can lag the live TUI by several seconds — wait 1–2s
+  before retrying keystrokes if a previous send seems to have had no effect.
 
 **Remove / stop:**
 ```bash
