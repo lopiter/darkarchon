@@ -578,15 +578,20 @@ def main():
     p.add_argument("--session-name", default=SESSION_NAME)
     p.add_argument("--state-dir", default=str(STATE_DIR))
     p.add_argument("--stale-after", type=float, default=30.0)
+    p.add_argument("--evict-after", type=float, default=300.0)
     args = p.parse_args()
 
     SESSION_NAME = args.session_name
     STATE_DIR = Path(args.state_dir)
-    STORE = HostStateStore(stale_after_seconds=args.stale_after)
+    STORE = HostStateStore(
+        stale_after_seconds=args.stale_after,
+        evict_after_seconds=args.evict_after,
+    )
 
     print(f"Team hub [{SESSION_NAME}] → http://{args.host}:{args.port}")
     print(f"State dir:        {STATE_DIR}")
     print(f"Stale-after:      {args.stale_after}s")
+    print(f"Evict-after:      {args.evict_after}s")
     print("Ctrl-C to stop.")
 
     class ReusableThreadingServer(http.server.ThreadingHTTPServer):
