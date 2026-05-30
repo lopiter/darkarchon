@@ -35,8 +35,9 @@ existing pane, the kind is auto-detected (skip this).
 1. If the user names it ("as codex", "a claude worker"), pass `--kind` accordingly.
 2. Otherwise detect installed CLIs — `command -v claude` / `command -v codex`:
    - Only **one** installed → use it, no question.
-   - **Both** installed → ask the user once which to use; reuse that choice for
-     the rest of the session.
+   - **Both** installed → ask which to use **on every spawn**. Different workers
+     are often different kinds (e.g. a codex reviewer + a claude dev), so do NOT
+     remember one answer as a default and reuse it for the next worker.
 3. For codex, make sure `codex login` is done (or `OPENAI_API_KEY` is set) first,
    or every turn 401s.
 
