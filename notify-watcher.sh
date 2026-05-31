@@ -38,9 +38,16 @@ curl -N -sS "$HUB_URL/api/events" | while IFS= read -r line; do
                     fr=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('from',''))" 2>/dev/null)
                     to=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('to',''))" 2>/dev/null)
                     if [ "$fr" = "busy" ] && [ "$to" = "idle" ]; then
-                        host=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('host',''))" 2>/dev/null)
-                        name=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print((d.get('worker') or {}).get('name',''))" 2>/dev/null)
-                        notify "✓ $name finished" "$host"
+                        # Suppress when the user is currently viewing this pane:
+                        # you're watching it finish and about to type, so a
+                        # desktop alert is just noise. Notify only for panes you
+                        # are NOT looking at (background workers, other windows).
+                        focused=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print((d.get('worker') or {}).get('focused', False))" 2>/dev/null)
+                        if [ "$focused" != "True" ]; then
+                            host=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('host',''))" 2>/dev/null)
+                            name=$(printf '%s' "$json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print((d.get('worker') or {}).get('name',''))" 2>/dev/null)
+                            notify "✓ $name finished" "$host"
+                        fi
                     fi
                     ;;
                 new_question)

@@ -70,6 +70,20 @@ describe('transformRawStatus', () => {
     expect(states).toEqual(['awaiting_user:typed', 'busy', 'dead']);
   });
 
+  it('maps focused through, defaulting to false when the agent omits it', () => {
+    const [host] = transformRawStatus(
+      res([
+        rw({ focused: true, name: 'viewed', target: ':1' }),
+        rw({ focused: false, name: 'background', target: ':2' }),
+        rw({ name: 'legacy', target: ':3' }), // agent predating the field
+      ])
+    );
+    const byName = Object.fromEntries(
+      host!.teams[0]!.workers.map((w) => [w.name, w.focused])
+    );
+    expect(byName).toEqual({ viewed: true, background: false, legacy: false });
+  });
+
   it('coerces empty detail to undefined', () => {
     const [host] = transformRawStatus(res([rw({ detail: '' })]));
     expect(host!.teams[0]!.workers[0]!.detail).toBeUndefined();

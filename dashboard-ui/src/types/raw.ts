@@ -56,6 +56,12 @@ export interface RawWorker {
   team_name: string;
   is_orchestrator: boolean;
   /**
+   * True when an attached tmux client is currently viewing this pane.
+   * Used to suppress OS push for the pane the user is actively looking at /
+   * typing in. Optional — legacy agents predating the field omit it (→ false).
+   */
+  focused?: boolean;
+  /**
    * Terminal tail — last N lines of stdout/stderr from the worker pane.
    *
    * Phase 3a uses this to render the panel's Recent Output section

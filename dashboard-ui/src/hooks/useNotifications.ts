@@ -142,7 +142,13 @@ export function useNotifications(): void {
       }
 
       const pushable = transitions.filter(
-        (t) => t.kind === 'awaiting' || t.kind === 'rate_limited'
+        (t) =>
+          (t.kind === 'awaiting' || t.kind === 'rate_limited') &&
+          // No OS push for the pane the user is currently viewing — when you're
+          // typing in a worker/orchestrator pane it goes `typed` (→ awaiting),
+          // but you're already looking at it, so an alert is pure noise. The
+          // in-dashboard pulse above still fires for visual feedback.
+          !('worker' in t && t.worker.focused)
       );
       if (pushable.length > 0) {
         debouncer.push(pushable);

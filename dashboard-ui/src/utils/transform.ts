@@ -116,6 +116,7 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
     process: rw.process,
     detail: rw.detail || undefined,
     isOrchestrator: rw.is_orchestrator,
+    focused: rw.focused ?? false,
     enteredStateAt: new Date(refTs).toISOString(),
     dispatchOut: rw.outgoing_dispatches.length > 0,
     dispatchIn: rw.incoming_dispatches.length > 0,
