@@ -30,6 +30,13 @@ export interface Worker {
   detail?: string;
   isOrchestrator: boolean;
   /**
+   * True when the user is currently viewing this pane (attached tmux client,
+   * active window + pane). OS push is suppressed for the focused pane — no
+   * alert needed for the pane you're already looking at / typing in.
+   * Optional: undefined (legacy agents) → treated as not-focused → notify.
+   */
+  focused?: boolean;
+  /**
    * Sort key for awaiting cards (DESIGN.md Section 4.3).
    * Phase 1: dummy/overlay sets it explicitly.
    * Phase 3: source TBD (frontend tracks state change OR backend adds field).

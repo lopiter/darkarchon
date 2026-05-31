@@ -73,6 +73,11 @@ class PaneInfo:
     target: str  # session:window.pane
     cwd: str
     window_name: str
+    # True when an attached client is currently viewing this pane (session
+    # attached + window active in its session + pane active in its window).
+    # Used to suppress desktop notifications for the pane the user is looking
+    # at — finishing a turn you're watching needs no alert.
+    focused: bool = False
 
 
 def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
@@ -105,7 +110,10 @@ def list_llm_panes(
             "list-panes",
             "-a",
             "-F",
-            "#{pane_pid} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
+            # session_attached/window_active/pane_active come right after pane_pid
+            # (all single tokens) so pane_current_path stays the trailing remainder
+            # and can still contain spaces.
+            "#{pane_pid} #{session_attached} #{window_active} #{pane_active} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
         ]
     )
     if rc != 0:
@@ -113,16 +121,26 @@ def list_llm_panes(
 
     panes: list[PaneInfo] = []
     for line in out.splitlines():
-        parts = line.split(None, 4)
-        if len(parts) < 5:
+        parts = line.split(None, 7)
+        if len(parts) < 8:
             continue
-        pid, process, target, window_name, cwd = parts
+        pid, attached, win_active, pane_active, process, target, window_name, cwd = parts
         match_proc = process in allowed_processes or bool(_NODE_VERSION_RE.match(process))
         match_window = window_name in window_names
         match_known = any(k in known_kinds for k in _pane_window_keys(target, window_name))
         if not (match_proc or match_window or match_known):
             continue
-        panes.append(PaneInfo(pid=pid, process=process, target=target, window_name=window_name, cwd=cwd))
+        focused = attached.isdigit() and int(attached) > 0 and win_active == "1" and pane_active == "1"
+        panes.append(
+            PaneInfo(
+                pid=pid,
+                process=process,
+                target=target,
+                window_name=window_name,
+                cwd=cwd,
+                focused=focused,
+            )
+        )
     return panes
 
 
@@ -244,6 +262,7 @@ def scan_panes(
                 "window_name": p.window_name,
                 "cwd": p.cwd,
                 "pane_pid": p.pid,
+                "focused": p.focused,
                 "state": state["state"],
                 "detail": state["detail"],
                 "recent_output": recent_output,
