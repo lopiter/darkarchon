@@ -1,6 +1,6 @@
 ---
 name: darkarchon-team
-description: Use when the user wants to coordinate multiple coding-agent workers (Claude Code or OpenAI Codex) across separate tmux windows/repos with darkarchon — spawning or inviting workers, dispatching tasks ("have X build/review Y"), or starting/stopping/inspecting the team. Triggers on intents like "spawn a worker", "invite this pane to the team", "dispatch to X", "start/stop the team".
+description: Use when the user's message mentions the "dark team" — e.g. "create a dark team", "invite session:window to the dark team", "dark team에 초대해줘" — to coordinate multiple coding-agent workers (Claude Code or OpenAI Codex) across separate tmux windows/repos with darkarchon. Do NOT trigger on bare "team" requests; those belong to Claude Code's native team / sub-agent features. Also use for follow-up commands ("have X build/review Y", "stop the team") in a conversation where the dark team context is already active.
 ---
 
 # darkarchon team
@@ -21,17 +21,55 @@ config. This skill maps natural-language requests to darkarchon commands so you
   current. To customize the team-naming / project conventions, replace the
   symlink with a real copy under a different name and edit that.
 
+## Trigger rule (important)
+
+- **"dark team"** in the user's message is the gate. A bare "team" is Claude
+  Code's native team / `Task` sub-agents — a different system; don't route it
+  here.
+- Once the dark-team context is active in a conversation, follow-ups ("have X
+  do Y", "kick X out", "stop the team") route here without repeating the phrase.
+- "dark" is the trigger word, **not** the team name — the actual
+  `DARKARCHON_TEAM` value is resolved below.
+
 ## Team name (`DARKARCHON_TEAM`)
 
 darkarchon isolates tmux sessions and state by one env var, `DARKARCHON_TEAM`.
 Workers in different teams are fully separate (own tmux session + own
 `~/.darkarchon/<team>/` state dir).
 
-- Pick **one team name per workspace/project** and reuse it for the whole
-  conversation. Unset ⇒ the `default` team.
-- If the user hasn't said which team, ask once (suggest `default` or a
-  project-based name), then prefix **every** command below with
-  `DARKARCHON_TEAM=<team>`.
+Resolve the team once per conversation, then prefix **every** command below
+with `DARKARCHON_TEAM=<team>`:
+
+1. Already decided in this conversation, or named by the user → use it.
+2. Otherwise list existing teams: `ls ~/.darkarchon/` (each subdir is a team's
+   state dir).
+   - Exactly one team exists → use it (mention which one you picked).
+   - Several exist → ask which.
+   - None exist → ask for a name (suggest `default` or a project-based one).
+     There is no separate "create team" command — the team comes into being
+     with its first invite/spawn.
+
+## Entry flows
+
+**"Create a dark team"** (e.g. "dark team 만들어줘") — build a team from panes
+the user already has open:
+
+1. Survey what's running:
+   ```bash
+   tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  #{pane_current_command}  #{pane_current_path}'
+   ```
+2. Pick out windows that look like coding agents (`claude` / `codex` /
+   `node` running a CLI) and present them, then **ask the user** which windows
+   to invite and under what worker names (suggest the basename of each pane's
+   cwd as the name). Ask for the team name in the same round if unresolved.
+3. Invite each selected window with `invite-worker.sh` (below). If the user
+   wants agents that aren't running yet, spawn those with `spawn-worker.sh`.
+
+**"Invite `<session:window>` to the dark team"** — register one existing pane:
+
+1. Resolve the team (see above): if no team exists yet, ask for a name first;
+   if one already exists, invite into it without asking.
+2. Run `invite-worker.sh` (below) with the target window.
 
 ## Choosing the worker kind (Claude vs Codex) — spawn only
 
