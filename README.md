@@ -54,25 +54,35 @@ Open a Claude Code session in any directory and paste:
 Install darkarchon from https://github.com/yourname/darkarchon following its README quick start.
 
 - Clone to ~/work/darkarchon (skip if already present)
-- Append `export DARKARCHON_HOME=~/work/darkarchon` to my shell rc
+- Run ~/work/darkarchon/install.sh — it symlinks the darkarchon-team skill into
+  ~/.claude/skills/ and appends DARKARCHON_HOME to my shell rc. If it doesn't fit
+  my environment (fish, custom rc), reproduce those two effects by hand instead.
 - Run `pip install --user mcp` to enable native MCP tools inside workers
-- Verify with `python3 -c "import mcp; print(\"ok\")"`
+- Verify with `python3 -c "import mcp; print(\"ok\")"` and `ls -la ~/.claude/skills/darkarchon-team`
 - Do NOT start the dashboard / agent / any worker yet — I'll do that manually
 - Print a one-line summary of what changed at the end
 ```
 
 Claude reads the rest of this README, decides which shell rc (`~/.zshrc` / `~/.bashrc`) you actually use, and adapts to your Python setup (system / pyenv / venv). One-shot install on most macOS / Linux setups.
 
+`install.sh` is idempotent — re-run it any time; a real directory already at the
+skill destination is backed up (`.bak.<timestamp>`), never deleted.
+
 For a step-by-step manual install, see Quick start below.
 
 ### Drive it with natural language (skill)
 
 You don't have to memorize the scripts. `skills/darkarchon-team/SKILL.md` is a
-ready-to-copy [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills):
-drop it into `~/.claude/skills/darkarchon-team/` and Claude maps requests like
-"spawn a backend worker", "invite this pane as a reviewer", "have backend add a
-health endpoint", or "stop the team" to the right darkarchon commands. It's a
-generic starting point — tailor the team-naming and project conventions to taste.
+[Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) that maps
+requests like "spawn a backend worker", "invite this pane as a reviewer", "have
+backend add a health endpoint", or "stop the team" to the right darkarchon
+commands. `install.sh` symlinks it into `~/.claude/skills/darkarchon-team`, so
+`git pull` keeps it current — no re-copying.
+
+Want to tailor the team-naming / project conventions to your own setup? Replace
+the symlink with a real copy under a different name (e.g.
+`~/.claude/skills/my-team/`) and edit away; the bundled skill then serves as the
+upstream reference.
 
 ---
 

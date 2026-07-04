@@ -12,8 +12,14 @@ config. This skill maps natural-language requests to darkarchon commands so you
 
 - Scripts live at **`$DARKARCHON_HOME`** — set this in your shell rc, e.g.
   `export DARKARCHON_HOME=~/work/darkarchon`.
-- This is a **generic, copy-me example**. Drop it in `~/.claude/skills/` and adapt
-  the team-naming / project conventions to your own setup.
+- If `$DARKARCHON_HOME` is unset (e.g. fresh shell right after install), resolve
+  it before failing: this skill is normally a symlink into the repo
+  (`readlink -f ~/.claude/skills/darkarchon-team` → `<repo>/skills/darkarchon-team`,
+  so the repo is two directories up), and `~/work/darkarchon` is the default
+  clone location. Use the resolved path as an inline prefix for the commands below.
+- Installed by the repo's `install.sh` as a symlink, so `git pull` keeps it
+  current. To customize the team-naming / project conventions, replace the
+  symlink with a real copy under a different name and edit that.
 
 ## Team name (`DARKARCHON_TEAM`)
 
