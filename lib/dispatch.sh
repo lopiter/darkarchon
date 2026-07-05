@@ -71,10 +71,12 @@ TASK_ID="$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 2)"
 DONE_MARKER="DONE-${TASK_ID}"
 
 # Filesystem layout
-# IO files use the short /tmp/ee path so the trigger fits in tmux's 200-char budget.
-# Persistent task state lives in $STATE_DIR/tasks.db (managed by task_store.py).
-IO_DIR="/tmp/ee"
-mkdir -p "$IO_DIR"
+# IO files use a short, per-user path (/tmp/<prefix>-<uid>, mode 700) so the
+# trigger fits in tmux's 200-char budget AND other users on a shared host can't
+# read a worker's prompts (the old world-readable /tmp/ee leaked them). Persistent
+# task state lives in $STATE_DIR/tasks.db (managed by task_store.py); the plain
+# files here are transient scratch, safe to lose on reboot.
+IO_DIR="$(io_dir)"
 PROMPT_FILE="$IO_DIR/p-${TASK_ID}.txt"
 RESULT_FILE="$IO_DIR/r-${TASK_ID}.txt"
 
@@ -145,76 +147,111 @@ if [ "${#TRIGGER}" -gt 199 ]; then
     exit 1
 fi
 
-# Send via tmux send-keys (single short line, no embedded newlines).
-if [ "$KIND" = "codex" ]; then
-    # codex needs literal mode: `-l` stops tmux interpreting words like "Enter"
-    # as key names, `--` guards a message starting with `-`. codex's TUI also
-    # occasionally swallows the first Enter, so we double-press; an empty second
-    # submit is a harmless no-op on the codex composer.
-    tmux send-keys -t "=$TARGET" -l -- "$TRIGGER"
-    sleep 0.2
-    tmux send-keys -t "=$TARGET" Enter
-    sleep 0.2
-    tmux send-keys -t "=$TARGET" Enter
-else
-    tmux send-keys -t "=$TARGET" "$TRIGGER"
-    sleep 0.6
-    tmux send-keys -t "=$TARGET" Enter
-fi
+# send_trigger — deliver the short "go" line to the worker. Kind-specific only
+# in HOW keys are sent; the payload is identical. Called once up front and once
+# more as a nudge if the worker ends its turn without producing a result.
+send_trigger() {
+    if [ "$KIND" = "codex" ]; then
+        # codex needs literal mode: `-l` stops tmux interpreting words like "Enter"
+        # as key names, `--` guards a message starting with `-`. codex's TUI also
+        # occasionally swallows the first Enter, so we double-press; an empty second
+        # submit is a harmless no-op on the codex composer.
+        tmux send-keys -t "=$TARGET" -l -- "$TRIGGER"
+        sleep 0.2
+        tmux send-keys -t "=$TARGET" Enter
+        sleep 0.2
+        tmux send-keys -t "=$TARGET" Enter
+    else
+        tmux send-keys -t "=$TARGET" "$TRIGGER"
+        sleep 0.6
+        tmux send-keys -t "=$TARGET" Enter
+    fi
+}
 
+# finalize_success — read the result file (authoritative completion signal for
+# BOTH kinds now: the worker Writes it as its last step) and exit 0. The DONE
+# marker is no longer required — pane marker-counting was fragile under codex's
+# alt-screen and Claude's scrollback wrapping.
+finalize_success() {
+    sleep 1  # let the Write flush fully before reading
+    if [ ! -s "$RESULT_FILE" ]; then sleep 2; fi   # Write can land microseconds late
+    if [ ! -s "$RESULT_FILE" ]; then
+        set_error "completion signal but result file missing or empty" failed
+        echo "PARSE_ERROR: $TASK_ID (no result at $RESULT_FILE)" >&2
+        exit 3
+    fi
+    RESULT="$(cat "$RESULT_FILE")"
+    RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"   # strip trailing whitespace
+    set_result "$RESULT"
+    printf '%s\n' "$RESULT"
+    exit 0
+}
+
+send_trigger
 update_status running
 
-# Poll pane only for DONE marker presence (no content extraction from pane)
+# ── Poll for completion ─────────────────────────────────────────────────────
+# Completion is the RESULT FILE, not a wall-clock deadline. Two stop conditions
+# besides success:
+#   - hard cap TASK_MAX_SECONDS (default 3600) — backstop for a wedged worker.
+#     Long-running tasks no longer die at the old flat 300s.
+#   - activity-based turn-end: if the worker returns to idle (its turn ended)
+#     without writing a result, it ignored the contract. We nudge once (re-send
+#     the trigger) and, if it idles again with no result, fail fast — far quicker
+#     than waiting out the cap. Idle is confirmed over N polls so a single
+#     mis-scrape (scrape-based workers) doesn't trip it; hook-based workers report
+#     idle authoritatively but still pass through the same debounce harmlessly.
 START_EPOCH=$(date +%s)
+MAX="${TASK_MAX_SECONDS:-3600}"
+IDLE_CONFIRM="${TASK_IDLE_CONFIRM:-3}"       # confirmed-idle polls ⇒ turn ended
+NOSTART_CONFIRM="${TASK_NOSTART_CONFIRM:-10}" # idle-from-the-start polls ⇒ trigger never took
+seen_busy=0
+idle_streak=0
+nudged=0
+
 while true; do
+    # 1. Authoritative: result file present ⇒ done.
+    if [ -s "$RESULT_FILE" ]; then
+        finalize_success
+    fi
+
     NOW=$(date +%s)
-    ELAPSED=$((NOW - START_EPOCH))
-    if [ "$ELAPSED" -gt "${TASK_TIMEOUT:-300}" ]; then
-        set_error "timeout after ${TASK_TIMEOUT}s waiting for ${DONE_MARKER}" timeout
-        echo "TIMEOUT: $TASK_ID (target=$TARGET)" >&2
+    if [ "$((NOW - START_EPOCH))" -gt "$MAX" ]; then
+        set_error "hard cap ${MAX}s reached without result" timeout
+        echo "TIMEOUT: $TASK_ID (target=$TARGET, cap=${MAX}s)" >&2
         exit 2
     fi
 
-    if [ "$KIND" = "codex" ]; then
-        # codex completion is detected by the RESULT FILE, not the stdout marker:
-        # codex's alternate-screen + line wrapping makes pane marker-counting
-        # unreliable (per omc). The worker writes r-<id>.txt as its last step, so a
-        # non-empty file is the authoritative "done" signal.
-        if [ -s "$RESULT_FILE" ]; then
-            sleep 1  # let the Write flush fully before reading
-            RESULT="$(cat "$RESULT_FILE")"
-            RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"
-            set_result "$RESULT"
-            printf '%s\n' "$RESULT"
-            exit 0
-        fi
-    else
-        # claude: look for DONE marker in pane. We need it to appear at least twice
-        # (echo of trigger + worker's actual output) to know the worker actually
-        # produced it, not just our trigger echo.
-        PANE="$(tmux capture-pane -p -J -t "=$TARGET" -S -2000 2>/dev/null || true)"
-        occurrences=$(grep -cF "$DONE_MARKER" <<<"$PANE" || true)
-        if [ "${occurrences:-0}" -ge 2 ]; then
-            # Worker has printed the marker. Give the filesystem a brief moment to
-            # ensure the Write tool finished flushing.
-            sleep 1
-            if [ ! -s "$RESULT_FILE" ]; then
-                # File missing or empty even though marker shown — sometimes Write
-                # comes microseconds after; retry once.
-                sleep 2
-            fi
-            if [ ! -s "$RESULT_FILE" ]; then
-                set_error "DONE marker observed but result file missing or empty" failed
-                echo "PARSE_ERROR: $TASK_ID (no result at $RESULT_FILE)" >&2
-                exit 3
-            fi
-            RESULT="$(cat "$RESULT_FILE")"
-            # Strip trailing whitespace/newlines for clean output
-            RESULT="${RESULT%"${RESULT##*[![:space:]]}"}"
-            set_result "$RESULT"
-            printf '%s\n' "$RESULT"
-            exit 0
+    # 2. Worker activity via the shared resolver (hook events > scrape).
+    STATE="$(python3 "$HERE/worker_state.py" "$WORKER" --field state 2>/dev/null || true)"
+    case "$STATE" in
+        busy|compacting) seen_busy=1; idle_streak=0 ;;
+        idle)            idle_streak=$((idle_streak + 1)) ;;
+        dead)
+            set_error "worker died mid-task (state=dead)" failed
+            echo "WORKER_DEAD: $TASK_ID (target=$TARGET)" >&2
+            exit 3 ;;
+        *)               idle_streak=0 ;;  # awaiting_user/rate_limited/error/unknown: occupied or blocked — wait under the cap
+    esac
+
+    turn_end=0
+    if [ "$seen_busy" -eq 1 ] && [ "$idle_streak" -ge "$IDLE_CONFIRM" ]; then
+        turn_end=1
+    elif [ "$seen_busy" -eq 0 ] && [ "$idle_streak" -ge "$NOSTART_CONFIRM" ]; then
+        turn_end=1  # never observed busy ⇒ the trigger likely didn't take
+    fi
+
+    if [ "$turn_end" -eq 1 ] && [ ! -s "$RESULT_FILE" ]; then
+        if [ "$nudged" -eq 0 ]; then
+            echo "NUDGE: $TASK_ID idle without result — re-sending trigger once" >&2
+            send_trigger
+            nudged=1; seen_busy=0; idle_streak=0
+        else
+            set_error "worker returned to idle without writing result (after 1 nudge)" failed
+            echo "NO_RESULT: $TASK_ID (target=$TARGET)" >&2
+            exit 3
         fi
     fi
+
     sleep "${POLL_INTERVAL:-3}"
 done

@@ -30,6 +30,7 @@ sys.path.insert(0, str(HERE))
 from lib.tmux_scanner import scan_panes  # noqa: E402
 from lib.worker_resolver import parse_registry_file, resolve_workers  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
+from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
 
 
 @dataclass
@@ -128,7 +129,14 @@ def report_once(cfg: AgentConfig) -> int:
         known_kinds=known_kinds,
     )
     workers = resolve_workers(scanned, registry)
-    workers = annotate_workers(workers, *_collect_state_dirs(cfg.registry_path))
+    state_dirs = _collect_state_dirs(cfg.registry_path)
+    # Overlay hook-reported state (event-accurate awaiting_user with the actual
+    # permission message) on top of the TUI scrape for spawned Claude workers.
+    # Workers without a hook file (invited/codex/legacy) pass through untouched.
+    workers = annotate_workers_with_hooks(workers, *state_dirs)
+    # Heartbeat liveness has the final say — a dead worker is dead regardless of
+    # any stale hook state, so this runs AFTER the hook overlay.
+    workers = annotate_workers(workers, *state_dirs)
     url = f"{cfg.hub_url.rstrip('/')}/api/hosts/{cfg.host_id}/state"
     return _http_post_json(url, {"workers": workers}, timeout=cfg.request_timeout)
 

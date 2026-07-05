@@ -172,6 +172,8 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **dispatch** — writes a task row to `tasks.db`, sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
+- **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex.
+- **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
 
 See [DESIGN.md](DESIGN.md) for the dashboard visual spec.
 
@@ -504,12 +506,16 @@ pip install --user mcp
 ./agent.sh start
 
 # workers spawned BEFORE the pull won't have the new wrappers
-# (no heartbeat-writer / no MCP server child). To pick them up:
+# (no heartbeat-writer / no MCP server child / no state hooks). To pick them up:
 ./lib/kill-worker.sh <worker>
 ./lib/spawn-worker.sh <worker> <cwd> <role>
 ```
 
 Until an agent host is on the new code, workers it owns will show `heartbeat_age_sec=null` on the dashboard — the dashboard side falls back to plain tmux-scan inference for those, so they're still visible, just less accurate.
+
+**Re-spawn to gain event-driven state.** Hook-based state reporting (accurate `busy`/`idle`/`awaiting_user` without TUI scraping) is injected at launch via `claude --settings`, so a running Claude session cannot be upgraded in place — Claude Code snapshots its hook config at startup and won't adopt an externally-added one mid-session. `kill-worker` + `spawn-worker` (above) gives the worker its state hooks. Workers you'd rather not restart keep working on the scrape fallback; the dashboard just labels their state `source=scrape` instead of `source=hook`. Invited workers (`invite-worker.sh`) are always scrape-based by design — they exist precisely to preserve a running conversation.
+
+**Scratch path moved.** Dispatch prompt/result scratch files moved from the world-readable `/tmp/ee` to a per-user `/tmp/darkarchon-<uid>` (mode 700) so other users on a shared host can't read a worker's prompts. Nothing to migrate — the files are transient (the durable copy lives in `tasks.db`); an in-flight dispatch started under the old path is read back from its recorded path and completes normally.
 
 ---
 
@@ -523,12 +529,16 @@ The core loop is stable. What works today:
 - SQLite task store with state-machine-validated transitions
 - mkdir-based registry lock — concurrent spawn/kill no longer race
 - worktree isolation by `DARKARCHON_TEAM` (no implicit path inference)
+- unified state resolver (`lib/worker_state.py`): heartbeat > hook events > scrape, one copy shared by dispatch + dashboard
+- event-driven state for spawned Claude workers via injected hooks (no TUI-glyph guessing); scrape fallback for invited/codex workers
+- per-worker + per-cwd dispatch locks — a busy-check and its dispatch are atomic, so two dispatchers can't double-fire
+- result-file-first completion + activity-based timeout (nudge once on a contract-less turn-end, hard cap `TASK_MAX_SECONDS`) — long tasks no longer die at a flat 300s
 
 Rough edges:
 
 - prompt layering knobs (`DARKARCHON_PROMPT_DIR`) are minimally documented
 - no install one-liner / brew formula; clone-and-export only
 - agent and hub run as foreground daemons via `dashboard.sh` (no launchd/systemd integration)
-- broken pytest fixtures in `tests/` (not yet CI-wired)
+- tests are not yet CI-wired (they pass locally: `python3 -m pytest`)
 
 Built for working with multiple claude instances on cross-repo refactors without switching tmux windows by hand.
