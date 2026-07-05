@@ -5,18 +5,19 @@ from dashboard import _registered_team_for_worker
 
 
 def test_target_match_beats_stale_same_name_entry():
-    # 'homepage-backend' is registered live in the eoding team (window name) AND
-    # left over stale in 'default' (a dead session). The live pane reports a
-    # window-INDEX target; it must resolve to eoding, never to the stale default.
+    # 'homepage-backend' is registered live in the live-team session (window
+    # name) AND left over stale in 'default' (a dead session). The live pane
+    # reports a window-INDEX target; it must resolve to live-team, never to
+    # the stale default.
     teams_by_target = {
-        "eoding-team-hd-si-second:homepage-backend": "eoding-team-hd-si-second",
+        "live-team:homepage-backend": "live-team",
         "default:homepage-backend": "default",  # stale leftover, different target
     }
     worker = {
-        "target": "eoding-team-hd-si-second:2.1",
+        "target": "live-team:2.1",
         "window_name": "homepage-backend",
     }
-    assert _registered_team_for_worker(worker, teams_by_target) == "eoding-team-hd-si-second"
+    assert _registered_team_for_worker(worker, teams_by_target) == "live-team"
 
 
 def test_direct_window_index_target_match():
