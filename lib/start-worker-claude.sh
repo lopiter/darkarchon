@@ -130,6 +130,37 @@ EOF
     CLAUDE_FLAGS="$CLAUDE_FLAGS --mcp-config $MCP_CONFIG"
 fi
 
+# Generate a per-worker hooks settings file and inject it via --settings so this
+# worker reports its state through Claude Code hook events (event-driven, no TUI
+# scraping). The file lives in $STATE_DIR — OUTSIDE the worker's repo — so it
+# merges with the repo's own .claude/ settings and leaves no trace to clean up.
+# Skipped silently if the receiver script is absent (legacy install → the worker
+# falls back to scrape-based detection, same as invited/codex workers).
+STATE_HOOK="$TEAM_ROOT/lib/state-hook.sh"
+if [ -x "$STATE_HOOK" ]; then
+    mkdir -p "$STATE_DIR/states"
+    # Fresh slate: drop any stale state file from a prior worker of this name so
+    # worker_state.py never trusts a leftover 'busy' before the first event.
+    SAFE_NAME="$(printf '%s' "$WORKER_NAME" | tr -c '[:alnum:]_' '_')"
+    rm -f "$STATE_DIR/states/${SAFE_NAME}.json" 2>/dev/null || true
+
+    HOOKS_CONFIG="$STATE_DIR/hooks-settings-${WORKER_NAME}.json"
+    _hook() { printf "'%s' '%s' %s" "$STATE_HOOK" "$WORKER_NAME" "$1"; }
+    cat > "$HOOKS_CONFIG" <<EOF
+{
+  "hooks": {
+    "SessionStart":     [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
+    "Stop":             [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
+    "Notification":     [{"hooks": [{"type": "command", "command": "$(_hook awaiting_user)"}]}],
+    "PreCompact":       [{"hooks": [{"type": "command", "command": "$(_hook compacting)"}]}],
+    "SessionEnd":       [{"hooks": [{"type": "command", "command": "$(_hook ended)"}]}]
+  }
+}
+EOF
+    CLAUDE_FLAGS="$CLAUDE_FLAGS --settings $HOOKS_CONFIG"
+fi
+
 # Exec into Claude. If user has a different binary in PATH, this still works.
 # shellcheck disable=SC2086
 if [ -z "$PROMPT" ]; then

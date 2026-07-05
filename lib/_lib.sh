@@ -11,6 +11,10 @@ fi
 # shellcheck disable=SC1091
 source "$TEAM_ROOT/config.env"
 
+# Export the resolved paths so python children (task_store.py, worker_state.py)
+# read the same STATE_DIR without each reconstructing it from DARKARCHON_TEAM.
+export STATE_DIR TOOL_PREFIX
+
 # Optional runtime worker registry (written by spawn-worker.sh, removed by kill-worker.sh)
 RUNTIME_REGISTRY="$STATE_DIR/workers-runtime.env"
 if [ -f "$RUNTIME_REGISTRY" ]; then
@@ -92,6 +96,52 @@ with_registry_lock() {
     local rc=0
     "$@" || rc=$?
     rmdir "$lock_dir" 2>/dev/null || true
+    return $rc
+}
+
+# io_dir — per-user scratch dir for dispatch prompt/result files. Replaces the
+# world-accessible /tmp/ee. mode 700 so other users on a shared host can't read
+# a worker's prompts. Path stays short (~/tmp/darkarchon-<uid>) to fit the
+# 200-char tmux trigger budget. Prints the path; creates it if missing.
+io_dir() {
+    local d="/tmp/${TOOL_PREFIX:-darkarchon}-$(id -u)"
+    mkdir -p "$d" 2>/dev/null || true
+    chmod 700 "$d" 2>/dev/null || true
+    printf '%s' "$d"
+}
+
+# with_named_lock <lock_name> <cmd...>
+# Hold an exclusive lock for the duration of <cmd> so two concurrent dispatches
+# to the same worker (or same cwd) can't both pass a busy-check and double-fire.
+# mkdir-atomic (same portability rationale as with_registry_lock). The lock dir
+# records the owner pid; a lock held by a DEAD pid is stolen (crashed dispatch
+# left it behind). If a LIVE owner holds it past DISPATCH_LOCK_WAIT_SEC, returns
+# 99 so the caller can report "another dispatch in flight" rather than block.
+with_named_lock() {
+    local name="$1"; shift
+    local lock_dir="$STATE_DIR/locks/${name}.lock"
+    local pidfile="$lock_dir/pid"
+    local max_wait="${DISPATCH_LOCK_WAIT_SEC:-3}"
+    local waited=0
+    mkdir -p "$STATE_DIR/locks"
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        local owner=""
+        owner="$(cat "$pidfile" 2>/dev/null || true)"
+        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+            # stale — owner pid gone. Steal it (mkdir below re-establishes atomically).
+            rm -rf "$lock_dir" 2>/dev/null || true
+            continue
+        fi
+        if [ "$waited" -ge "$max_wait" ]; then
+            return 99
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "$$" > "$pidfile" 2>/dev/null || true
+    local rc=0
+    "$@" || rc=$?
+    rm -rf "$lock_dir" 2>/dev/null || true
     return $rc
 }
 
