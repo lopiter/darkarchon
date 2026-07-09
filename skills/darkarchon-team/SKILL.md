@@ -1,6 +1,6 @@
 ---
 name: darkarchon-team
-description: Use when the user's message mentions the "dark team" — e.g. "create a dark team", "invite session:window to the dark team", "dark team에 초대해줘" — to coordinate multiple coding-agent workers (Claude Code or OpenAI Codex) across separate tmux windows/repos with darkarchon. Do NOT trigger on bare "team" requests; those belong to Claude Code's native team / sub-agent features. Also use for follow-up commands ("have X build/review Y", "stop the team") in a conversation where the dark team context is already active.
+description: Use when the user's message mentions the "dark team" — e.g. "create a dark team", "invite session:window to the dark team", "invite to the dark team" — to coordinate multiple coding-agent workers (Claude Code or OpenAI Codex) across separate tmux windows/repos with darkarchon. Do NOT trigger on bare "team" requests; those belong to Claude Code's native team / sub-agent features. Also use for follow-up commands ("have X build/review Y", "stop the team") in a conversation where the dark team context is already active.
 ---
 
 # darkarchon team
@@ -51,7 +51,7 @@ with `DARKARCHON_TEAM=<team>`:
 
 ## Entry flows
 
-**"Create a dark team"** (e.g. "dark team 만들어줘") — build a team from panes
+**"Create a dark team"** (e.g. "create a dark team") — build a team from panes
 the user already has open:
 
 1. Survey what's running:

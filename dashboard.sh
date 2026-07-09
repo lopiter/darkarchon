@@ -86,10 +86,10 @@ EOF
 
         # ── Friendly LAN IPs ───────────────────────────────────────
         echo ""
-        echo "접속 가능한 주소:"
+        echo "Reachable at:"
         echo "  - http://localhost:$port"
         echo "  - http://127.0.0.1:$port"
-        # 외부 접속용 IP (LAN/공유망)
+        # External IPs for LAN / shared-network access
         ifconfig 2>/dev/null \
             | awk '/^[a-z]/{iface=$1} /inet /{if ($2 != "127.0.0.1") print iface, $2}' \
             | sed 's/://' \
