@@ -10,13 +10,15 @@ import re
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Active spinner uses varying glyphs (✽ ✻ ★ · ⠁ etc.) — match the gerund.
 # Claude Code TUI localizes the verb based on user language: English shows
-# e.g. "Whisking…", Korean shows "작성 중 …". We accept either ending so the
-# detector doesn't false-idle on non-English workers.
+# e.g. "Whisking…"; other locales localize the verb but keep the trailing "…".
+# Korean, for example, ends its progress line with the Hangul marker matched
+# below. We accept either ending so the detector doesn't false-idle on
+# non-English workers.
 # `still running` used to be matched here too, but it false-positived on
 # Claude's "* Cooked for 27s · 2 shells still running" status line, which
 # means the response is *done* and only background shells are alive
 # (Claude itself is accepting prompts — idle).
-BUSY_PATTERN = re.compile(r"[A-Za-z]+ing…|중\s*…")
+BUSY_PATTERN = re.compile(r"[A-Za-z]+ing…|중\s*…")  # "중 …" = Korean "…-ing" progress marker (functional — keep)
 # Compacting matches BUSY too — check first so it doesn't get classified as busy.
 COMPACT_PATTERN = re.compile(r"[Cc]ompacting…|compact.*in progress|/compact\s")
 RATE_LIMIT_PATTERN = re.compile(

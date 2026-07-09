@@ -4,7 +4,7 @@ The dashboard hub keeps no DB — host reports are POSTed in, stored in a dict,
 and served back on GET. Stale hosts (no heartbeat for N seconds) have their
 workers marked dead; hosts silent past `evict_after_seconds` are dropped
 entirely so a long-gone PC disappears from the dashboard instead of
-lingering forever (DESIGN.md §7.2 "5분 후 dead 숨김").
+lingering forever (DESIGN.md §7.2 "hide dead workers after 5 min").
 """
 
 from __future__ import annotations
