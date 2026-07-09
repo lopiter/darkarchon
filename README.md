@@ -549,3 +549,9 @@ Rough edges:
 - tests are not yet CI-wired (they pass locally: `python3 -m pytest`)
 
 Built for working with multiple claude instances on cross-repo refactors without switching tmux windows by hand.
+
+---
+
+## License
+
+[MIT](LICENSE) — use, modify, and distribute freely, including commercially. Just keep the copyright notice.
