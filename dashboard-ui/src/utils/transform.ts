@@ -5,7 +5,7 @@ import type {
   RawWorkerState,
 } from '../types/raw';
 
-/** Section 13 결정사항 — 2단계 구분 (stale → dead)는 후속 phase. */
+/** Section 13 decision — the two-step distinction (stale → dead) is a later phase. */
 export const HOST_STALE_MS = 15_000;
 
 /**
@@ -49,7 +49,7 @@ export function transformRawStatus(raw: RawStatusResponse): Host[] {
     return {
       id: hostId,
       lastPingMs,
-      hiddenCount: 0, // Phase 3에서 dead 5분 타이머 도입 후 계산
+      hiddenCount: 0, // computed in Phase 3 once the 5-min dead timer lands
       teams: Array.from(bucket.teams.entries()).map(
         ([name, workers]): Team => ({
           name,

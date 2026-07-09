@@ -220,7 +220,7 @@ function TmuxTargetSection({ target }: { target: string }) {
         </span>
       </button>
       <span className={styles.tmuxHint}>
-        본인 터미널에서 <code>tmux attach -t [paste]</code>
+        In your terminal: <code>tmux attach -t [paste]</code>
       </span>
     </section>
   );

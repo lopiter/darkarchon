@@ -1,5 +1,5 @@
 .section {
-  /* spacing 은 부모(HostGroup)가 책임 — 자신은 박스 없음 */
+  /* spacing is the parent's (HostGroup) responsibility — this element has no box of its own */
 }
 
 .label {

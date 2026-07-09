@@ -91,12 +91,12 @@ checked_dispatch() {
         error)
             echo "REFUSED: codex worker '$WORKER' ($TARGET) shows an auth/stream error." >&2
             [ -n "$detail" ] && echo "  detail: $detail" >&2
-            echo "  codex 토큰이 만료/미로그인 상태로 보입니다. 'codex login' 후 다시 시도해주세요." >&2
+            echo "  The codex token appears expired or not logged in. Run 'codex login' and try again." >&2
             return 12 ;;
         awaiting_user)
             echo "REFUSED: worker '$WORKER' ($TARGET) is awaiting user input." >&2
             [ -n "$detail" ] && echo "  detail: $detail" >&2
-            echo "  워커가 사용자 입력(권한 프롬프트/질문)을 기다립니다. 먼저 응답한 뒤 다시 시도해주세요." >&2
+            echo "  The worker is waiting on user input (a permission prompt or question). Respond first, then try again." >&2
             return 14 ;;
         dead|unknown)
             echo "REFUSED: worker '$WORKER' ($TARGET) is $state." >&2
@@ -106,7 +106,7 @@ checked_dispatch() {
             if [ "$FORCE" -eq 0 ]; then
                 echo "REFUSED: worker '$WORKER' ($TARGET) has unsent user input on the prompt line." >&2
                 [ -n "$detail" ] && echo "  prompt content: $detail" >&2
-                echo "  사용자가 직접 입력 중인 것으로 보입니다. Enter 로 보내거나 지운 뒤 다시 시도해주세요." >&2
+                echo "  It looks like you're typing directly. Send it with Enter or clear the line, then try again." >&2
                 return 11
             fi
             ;;  # --force: fall through, pre-clear happens below
@@ -124,7 +124,7 @@ checked_dispatch() {
             peer_state="$(resolve_field "$peer" state)"
             if [ "$peer_state" = "busy" ] || [ "$peer_state" = "compacting" ]; then
                 echo "REFUSED: peer worker '$peer' shares cwd '$SELF_DIR' and is $peer_state." >&2
-                echo "  git 워킹트리 충돌을 막기 위해 dispatch 를 직렬화합니다 — '$peer' 가 끝난 뒤 다시 시도해주세요." >&2
+                echo "  Dispatches are serialized to avoid git working-tree conflicts — try again once '$peer' finishes." >&2
                 return 13
             fi
         done < <(workers_sharing_dir "$SELF_DIR" "$WORKER")

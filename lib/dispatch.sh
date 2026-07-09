@@ -11,8 +11,8 @@
 #
 # Usage:
 #   dispatch.sh <worker> <prompt...>
-#   dispatch.sh homepage "분석할 내용..."
-#   echo "긴 multi-line 프롬프트..." | dispatch.sh website -
+#   dispatch.sh homepage "what to analyze..."
+#   echo "long multi-line prompt..." | dispatch.sh website -
 #
 # Exit codes:
 #   0  success — answer printed to stdout, JSON status=completed

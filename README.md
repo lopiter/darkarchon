@@ -112,8 +112,9 @@ $DARKARCHON_HOME/lib/spawn-worker.sh backend ~/projects/backend python
 $DARKARCHON_HOME/dispatch-safe.sh backend 'add a /health endpoint that returns ok'
 
 # 6. (optional) start the dashboard
-$DARKARCHON_HOME/dashboard.sh start     # hub on http://localhost:8765 + hash(team) % 100
-cd $DARKARCHON_HOME/dashboard-ui && npm install && npm run dev   # ui on http://localhost:5173
+$DARKARCHON_HOME/dashboard.sh start        # hub + local agent; hub on http://localhost:8765 + hash(team) % 100
+$DARKARCHON_HOME/dashboard-ui.sh start     # ui on http://localhost:5173 (npm install runs once if needed)
+# then open http://localhost:5173 — the UI proxies /api to the hub port automatically
 ```
 
 `spawn-worker.sh` creates the tmux session on demand if it doesn't exist. The worker runs `claude --permission-mode auto`, reads its role prompt from `prompts/`, and (when `mcp` is installed) loads the darkarchon MCP server as a child process.
@@ -364,8 +365,9 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `check-worker-state.sh <name>` | One-line state report — for orchestrators deciding whether to dispatch |
 | `questions.sh list \| show <id> \| answer <id> "<text>"` | Read & answer worker-filed questions |
 | `notify-watcher.sh [hub_url]` | Subscribe to hub SSE and emit macOS desktop notifications (terminal-notifier / osascript) |
-| `dashboard.sh start \| stop` | Start/stop hub + agent daemons |
-| `agent.sh start \| stop` | Start/stop just the per-host agent |
+| `dashboard.sh start \| stop \| status` | Start/stop hub + agent daemons (hub on `8765 + hash(team) % 100`) |
+| `dashboard-ui.sh start \| stop \| status` | Start/stop the Vite UI on `5173`; auto-syncs its proxy to the hub port. This is the screen you actually open in the browser |
+| `agent.sh start \| stop \| status` | Start/stop just the per-host agent |
 | `cleanup-serena.sh [--dry-run \| --all]` | Reap orphaned serena/lsp helper processes |
 
 **Worker-side tools** (called from inside a worker — via MCP when available, sh as fallback):
@@ -475,7 +477,7 @@ Run one hub and one agent per machine. The hub aggregates everyone's view; each 
 | Component | Why |
 |---|---|
 | `dashboard.sh start` | runs the hub (HTTP + SSE) AND the local agent |
-| `dashboard-ui` (`npm run dev` or built bundle) | the browser-side UI |
+| `dashboard-ui.sh start` (`npm run dev` under the hood, or serve a built bundle) | the browser-side UI on `5173` |
 | optional: `notify-watcher.sh` | macOS desktop notifications |
 
 Defaults are fine on a single-LAN home network. The hub binds to `0.0.0.0` so other hosts can POST.

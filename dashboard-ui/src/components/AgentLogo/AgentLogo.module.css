@@ -1,19 +1,26 @@
-/* AgentLogo — small inline mark beside worker name. */
+/* AgentLogo — small inline letter badge beside worker name. */
 
 .logo {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  opacity: 0.55;
-  line-height: 0;
+  border-radius: 3px;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  line-height: 1;
+  opacity: 0.75;
+  user-select: none;
 }
 
-/* Claude mark: warm off-white tint matching the brand's clay/sand palette */
+/* Claude badge: warm off-white tint matching a clay/sand palette */
 .claude {
-  color: #d4a57a;
+  color: #e6c3a0;
+  background: rgba(212, 165, 122, 0.16);
 }
 
-/* Codex/OpenAI mark: cool neutral, slightly lighter than muted text */
+/* Codex badge: cool neutral, slightly lighter than muted text */
 .codex {
   color: var(--text-muted);
+  background: rgba(148, 163, 184, 0.16);
 }

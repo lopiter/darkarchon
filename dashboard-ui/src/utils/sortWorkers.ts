@@ -3,11 +3,11 @@ import type { Worker, WorkerState } from '../types/domain';
 /**
  * DESIGN.md Section 4.3 — sort within a single team.
  *
- *   1. awaiting_user:typed / awaiting_user:question  (enteredStateAt 역순)
+ *   1. awaiting_user:typed / awaiting_user:question  (enteredStateAt desc)
  *   2. rate_limited
- *   3. busy / compacting                              (이름 순)
- *   4. idle                                            (이름 순)
- *   5. dead / unknown                                  (showDead=false 면 제외)
+ *   3. busy / compacting                              (by name)
+ *   4. idle                                            (by name)
+ *   5. dead / unknown                                  (excluded when showDead=false)
  *
  * Sorting never crosses team boundaries (caller passes one team's workers).
  */

@@ -29,22 +29,22 @@ export function NotificationToggle() {
   switch (permission) {
     case 'granted':
       label = '🔔 ON';
-      title = 'OS 알림 켜져 있음';
+      title = 'OS notifications are on';
       cls += ` ${styles.granted}`;
       break;
     case 'denied':
       label = '🔕 OFF';
-      title = '브라우저 설정에서 알림 권한을 허용해주세요';
+      title = 'Allow notification permission in your browser settings';
       cls += ` ${styles.denied}`;
       break;
     case 'unsupported':
       label = '🔕 N/A';
-      title = '이 브라우저는 Notification API를 지원하지 않음';
+      title = 'This browser does not support the Notification API';
       cls += ` ${styles.denied}`;
       break;
     default:
-      label = '🔔 OS 알림';
-      title = '클릭하여 OS 푸시 알림 켜기';
+      label = '🔔 Notify';
+      title = 'Click to enable OS push notifications';
   }
 
   return (
