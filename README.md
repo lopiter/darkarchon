@@ -118,6 +118,12 @@ cd $DARKARCHON_HOME/dashboard-ui && npm install && npm run dev   # ui on http://
 
 `spawn-worker.sh` creates the tmux session on demand if it doesn't exist. The worker runs `claude --permission-mode auto`, reads its role prompt from `prompts/`, and (when `mcp` is installed) loads the darkarchon MCP server as a child process.
 
+> **First worker on a new folder?** Claude Code shows a one-time *"Is this a
+> project you trust?"* prompt before it starts, so the worker looks stuck and
+> the first dispatch will refuse it as not-yet-idle. Switch to the window
+> (`Ctrl-b w`, pick the worker) and press **Enter** once to confirm. This is per
+> repo/folder — subsequent spawns in the same folder skip it.
+
 ### Claude or Codex workers
 
 Workers can be either Claude Code or OpenAI Codex. Pass `--kind` to `spawn-worker.sh`
