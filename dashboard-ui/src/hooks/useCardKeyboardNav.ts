@@ -4,8 +4,8 @@
  * advancing the selected worker) — this one moves DOM focus instead so
  * the user can highlight a card and press Enter/Space to open it.
  *
- * DESIGN.md Section 6.1 — "키보드 네비게이션 — 화살표 키로 카드 이동,
- * Enter로 패널 열기".
+ * DESIGN.md Section 6.1 — "Keyboard navigation — arrow keys move between
+ * cards, Enter opens the panel".
  */
 
 import { useEffect } from 'react';

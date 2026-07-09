@@ -2,7 +2,7 @@
  * 3-second window debouncer for OS-push-worthy transitions.
  *
  * DESIGN.md Section 5.2:
- *   > 3초 window 내에 awaiting이 N개 발생하면 1개 알림으로 합침
+ *   > if N awaiting events occur within a 3-second window, coalesce them into one notification
  *
  * Only `awaiting` and `rate_limited` transitions feed OS push notifications.
  * Mailbox/dispatch transitions stay in-dashboard (pulse only) and are
