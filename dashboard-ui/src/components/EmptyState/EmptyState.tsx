@@ -21,11 +21,11 @@ export function EmptyState({ variant, hostCount = 0 }: Props) {
       <div className={`${styles.wrap} ${styles.warn}`}>
         <div className={styles.card}>
           <div className={styles.headline}>
-            모든 호스트가 응답하지 않습니다
+            All hosts are unresponsive
           </div>
           <div className={styles.body}>
-            agent가 실행 중인지 확인하세요. 마지막 ping 이후 15초가 지나면
-            stale로 표시됩니다.
+            Check that the agent is running. Hosts are marked stale once
+            more than 15s have passed since their last ping.
           </div>
         </div>
       </div>
@@ -35,13 +35,14 @@ export function EmptyState({ variant, hostCount = 0 }: Props) {
   return (
     <div className={styles.wrap}>
       <div className={styles.card}>
-        <div className={styles.headline}>아직 발견된 워커가 없습니다</div>
+        <div className={styles.headline}>No workers found yet</div>
         <div className={styles.body}>
-          darkarchon은 tmux 세션에서 클로드가 떠 있는 것을 자동으로 찾습니다.
-          어떤 PC에서든 클로드 코드를 평소처럼 시작하면 여기에 나타납니다.
+          darkarchon automatically discovers Claude running in your tmux
+          sessions. Start Claude Code as usual on any machine and it will
+          appear here.
         </div>
         <div className={styles.meta}>
-          <span>연결된 호스트: {hostCount}</span>
+          <span>Connected hosts: {hostCount}</span>
         </div>
       </div>
     </div>

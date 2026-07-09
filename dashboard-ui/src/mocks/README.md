@@ -2,27 +2,27 @@
 
 ## dummyStatus.ts
 
-`RawStatusResponse` 형식 — hub `/api/status` 응답과 1:1 동일. Phase 3 통합 시 fetch 결과로 그대로 대체 가능. 화면 검증을 위한 시나리오:
+`RawStatusResponse` format — 1:1 identical to the hub `/api/status` response. Can be swapped directly for the fetch result during Phase 3 integration. Scenario for screen validation:
 
-| 호스트 | 상태 |
+| Host | State |
 |---|---|
-| main | fresh (3s 전 ping) |
-| second | 약간 (7s 전 ping) |
-| sim-host | stale (120s 전 ping → >15s 임계) |
+| main | fresh (ping 3s ago) |
+| second | slightly stale (ping 7s ago) |
+| sim-host | stale (ping 120s ago → >15s threshold) |
 
-**main / MYTEAM** 워커들이 정렬 검증의 핵심:
+**main / MYTEAM** workers are the core of the sort validation:
 - `backend` (typed → awaiting_user:typed)
-- `frontend` — 기본은 idle, `applyQuestionOverlay` 적용 시 awaiting_user:question 으로 강제
+- `frontend` — idle by default, forced to awaiting_user:question when `applyQuestionOverlay` is applied
 - `dashboard` (busy, orchestrator)
 - `writer` (compacting, external invited)
 
 **main / MYTEAM-VOC_1**:
-- `backend` (rate_limited) — 동명 워커가 다른 worktree 에 동시 존재
+- `backend` (rate_limited) — a worker of the same name exists concurrently in a different worktree
 - `voc` (busy, orchestrator)
 
 ## applyQuestionOverlay.ts
 
-`awaiting_user:question` 은 raw 에 state 가 없음 (Phase 2 SSE 이벤트). Phase 1 정렬/시각 검증을 위해 transform 결과에 후처리로 한 워커를 question 상태로 마킹.
+`awaiting_user:question` has no state in raw (it is a Phase 2 SSE event). For Phase 1 sort/visual validation, one worker is marked with the question state as a post-processing step on the transform result.
 
 ```ts
 const hosts = applyQuestionOverlay(

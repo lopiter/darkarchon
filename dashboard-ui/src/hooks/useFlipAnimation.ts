@@ -2,7 +2,7 @@
  * FLIP (First / Last / Invert / Play) layout transition for a list of
  * children identified by `keys`.
  *
- * DESIGN.md Section 7.2: 카드 위치 재정렬 0.6s.
+ * DESIGN.md Section 7.2: card position re-layout, 0.6s.
  *
  * Limitations (acceptable for the dashboard's scale):
  *   - reads bounding rects on every render where keys change → O(n) per
