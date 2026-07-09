@@ -51,14 +51,15 @@ darkarchon gives each worker its own tmux window — a full, independent claude 
 Open a Claude Code session in any directory and paste:
 
 ```
-Install darkarchon from https://github.com/yourname/darkarchon following its README quick start.
+Install darkarchon from https://github.com/lopiter/darkarchon following its README quick start.
 
-- Clone to ~/work/darkarchon (skip if already present)
-- Run ~/work/darkarchon/install.sh — it symlinks the darkarchon-team skill into
+- Ask me where to clone it (default: ~/work/darkarchon). Clone there if it isn't
+  already present, and use that path as DARKARCHON_HOME everywhere below.
+- Run <clone-dir>/install.sh — it symlinks the darkarchon-team skill into
   ~/.claude/skills/ and appends DARKARCHON_HOME to my shell rc. If it doesn't fit
   my environment (fish, custom rc), reproduce those two effects by hand instead.
 - Run `pip install --user mcp` to enable native MCP tools inside workers
-- Verify with `python3 -c "import mcp; print(\"ok\")"` and `ls -la ~/.claude/skills/darkarchon-team`
+- Verify with `python3 -c "import mcp; print('ok')"` and `ls -la ~/.claude/skills/darkarchon-team`
 - Do NOT start the dashboard / agent / any worker yet — I'll do that manually
 - Print a one-line summary of what changed at the end
 ```
@@ -93,8 +94,8 @@ upstream reference.
 ## Quick start
 
 ```bash
-# 1. clone
-git clone https://github.com/yourname/darkarchon ~/work/darkarchon
+# 1. clone (pick any directory you like; ~/work/darkarchon is just a convention)
+git clone https://github.com/lopiter/darkarchon ~/work/darkarchon
 
 # 2. shell rc
 export DARKARCHON_HOME=~/work/darkarchon
