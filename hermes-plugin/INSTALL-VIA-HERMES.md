@@ -59,7 +59,24 @@ Read your own `~/.hermes/config.yaml` (or `$HERMES_HOME/config.yaml`).
   `[file, terminal]` → append `orchestrator` to that list and save the file.
   Change nothing else in the config.
 
-## Step 5 — Verify
+## Step 5 — Optional: Slack notifications
+
+Ask the user whether they want Slack notifications (dispatch completions and
+employee questions pushed to a Slack channel). If yes, ask them for their
+Slack incoming-webhook URL (they create it at api.slack.com/apps → Incoming
+Webhooks; never invent or reuse one you found elsewhere), then append to
+their shell profile:
+
+```bash
+echo "export HERMES_ORCH_SLACK_WEBHOOK='<their URL>'" >> ~/.zshrc
+```
+
+This variable is read by the plugin only — it is not a Hermes core setting.
+The same URL may be shared across machines; all of them will post to the
+same channel. If they skip this, notifications still appear in the Hermes
+conversation itself.
+
+## Step 6 — Verify
 
 ```bash
 hermes plugins list 2>/dev/null | grep -A2 darkarchon
@@ -67,7 +84,7 @@ hermes plugins list 2>/dev/null | grep -A2 darkarchon
 
 Expected: `darkarchon-orchestrators` with status `enabled`.
 
-## Step 6 — Report to the user
+## Step 7 — Report to the user
 
 Tell the user, in their language:
 
