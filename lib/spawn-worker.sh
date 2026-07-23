@@ -21,11 +21,26 @@ source "$HERE/_lib.sh"
 # Optional leading --kind flag selects the agent flavor (default claude). Codex
 # workers launch via start-worker-codex.sh and use codex-specific dispatch and
 # busy-detection paths downstream (resolved from WORKER_<sn>_KIND in the registry).
+#
+# Optional --env KEY=VALUE (repeatable) prepends env assignments to the launcher
+# command line inside the new window, so the spawned agent process (and every
+# Bash it runs) inherits them. Primary use: giving an orchestrator-role worker
+# its own DARKARCHON_TEAM namespace for the worker team it will manage.
 KIND=claude
+ENV_PREFIX=""
+add_env() {
+    if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=. ]]; then
+        echo "ERROR: --env expects KEY=VALUE, got '$1'" >&2
+        exit 1
+    fi
+    ENV_PREFIX+="$(printf '%q' "$1") "
+}
 while [ $# -gt 0 ]; do
     case "$1" in
         --kind)   KIND="${2:-}"; shift 2 ;;
         --kind=*) KIND="${1#--kind=}"; shift ;;
+        --env)    add_env "${2:-}"; shift 2 ;;
+        --env=*)  add_env "${1#--env=}"; shift ;;
         --)       shift; break ;;
         -*)       echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
         *)        break ;;
@@ -33,7 +48,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... <name> <cwd> [<role>]" >&2
     exit 1
 fi
 NAME="$1"
@@ -90,7 +105,10 @@ fi
 # Create window + start claude with team contract injected as system prompt.
 # Wrapper reads $TEAM_ROOT/prompts/{all.md, <role>.md or worker.md} and exports
 # EE_WORKER_NAME / EE_TEAM_ROOT / EE_STATE_DIR / EE_ROLE for the worker process.
-tmux new-window -t "=$SESSION_NAME" -n "$NAME" -c "$CWD"
+# Trailing colon forces target-session resolution: without it tmux treats the
+# name as a target-window, and an orchestrator's own window in its manager's
+# session (named identically to this team) makes the target ambiguous.
+tmux new-window -t "=$SESSION_NAME:" -n "$NAME" -c "$CWD"
 
 # Lock the window name so claude's runtime version string (e.g. "2.1.150" — the
 # Node.js build, leaked through pane_current_command) doesn't overwrite "$NAME"
@@ -109,19 +127,19 @@ if [ "$KIND" = "codex" ]; then
     LAUNCHER="$HERE/start-worker-codex.sh"
     if [ -x "$LAUNCHER" ]; then
         tmux send-keys -t "=$SESSION_NAME:$NAME" \
-            "CODEX_FLAGS='${CODEX_FLAGS:-}' CODEX_MODEL='${CODEX_MODEL:-}' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
+            "${ENV_PREFIX}CODEX_FLAGS='${CODEX_FLAGS:-}' CODEX_MODEL='${CODEX_MODEL:-}' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
     else
         # Fallback to bare codex if wrapper missing (graceful degradation)
-        tmux send-keys -t "=$SESSION_NAME:$NAME" "codex ${CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}" Enter
+        tmux send-keys -t "=$SESSION_NAME:$NAME" "${ENV_PREFIX}codex ${CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}" Enter
     fi
 else
     LAUNCHER="$HERE/start-worker-claude.sh"
     if [ -x "$LAUNCHER" ]; then
         tmux send-keys -t "=$SESSION_NAME:$NAME" \
-            "CLAUDE_FLAGS='$CLAUDE_FLAGS' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
+            "${ENV_PREFIX}CLAUDE_FLAGS='$CLAUDE_FLAGS' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
     else
         # Fallback to bare claude if wrapper missing (graceful degradation)
-        tmux send-keys -t "=$SESSION_NAME:$NAME" "claude $CLAUDE_FLAGS" Enter
+        tmux send-keys -t "=$SESSION_NAME:$NAME" "${ENV_PREFIX}claude $CLAUDE_FLAGS" Enter
     fi
 fi
 

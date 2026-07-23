@@ -268,8 +268,11 @@ def annotate_workers_with_hooks(workers: list[dict], *state_dirs: Path) -> list[
 # ── CLI ────────────────────────────────────────────────────────────────────
 def _state_dir() -> Path:
     # Mirror task_store.py's resolution so callers work whether or not STATE_DIR
-    # is exported: explicit env first, else reconstruct from the team name.
-    sd = os.environ.get("EE_STATE_DIR") or os.environ.get("STATE_DIR")
+    # is exported. STATE_DIR (exported by _lib.sh for the team currently being
+    # operated on) wins over EE_STATE_DIR (this process's own worker identity):
+    # a spawned orchestrator managing its own team must resolve ITS workers'
+    # states, not report against the state dir of the team that spawned it.
+    sd = os.environ.get("STATE_DIR") or os.environ.get("EE_STATE_DIR")
     if sd:
         return Path(sd)
     team = os.environ.get("DARKARCHON_TEAM", "default")
