@@ -6,11 +6,18 @@ darkarchon's spawn/dispatch machinery.
 
 ```
 Hermes (fleet manager)
- ├─ orchestrator-A  ← Claude Code in tmux window hermes:orchestrator-A
- │    └─ its own darkarchon worker team (DARKARCHON_TEAM=orchestrator-A)
- ├─ orchestrator-B
+ ├─ tmux session "orchestrator-A"
+ │    ├─ window orchestrator-A   ← the employee (Claude Code, role=orchestrator)
+ │    └─ windows of its own darkarchon workers (DARKARCHON_TEAM=orchestrator-A)
+ ├─ tmux session "orchestrator-B"
  └─ ...
 ```
+
+Each employee owns a **dedicated tmux session named after it** (spawned via
+`spawn-worker.sh --session`); its sub-workers join that same session. The
+fleet's registry/state stay together under `~/.darkarchon/<fleet-team>/`.
+`kill` tears down the whole employee session (employee + workers) and its
+sub-team registry, keeping task history.
 
 Hermes ↔ orchestrator uses the same protocol darkarchon uses between an
 orchestrator and its workers: full prompt written to a file, a short

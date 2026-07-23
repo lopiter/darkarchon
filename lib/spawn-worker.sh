@@ -26,8 +26,15 @@ source "$HERE/_lib.sh"
 # command line inside the new window, so the spawned agent process (and every
 # Bash it runs) inherits them. Primary use: giving an orchestrator-role worker
 # its own DARKARCHON_TEAM namespace for the worker team it will manage.
+#
+# Optional --session <name> places the worker's window in that tmux session
+# instead of $SESSION_NAME (creating it if needed), while registry and state
+# stay in the current team. Lets a fleet manager give each orchestrator its
+# own dedicated session; the session is recorded as WORKER_<sn>_SESSION so
+# kill-worker.sh recognizes the window as ours despite the session mismatch.
 KIND=claude
 ENV_PREFIX=""
+SESSION_OVERRIDE=""
 add_env() {
     if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=. ]]; then
         echo "ERROR: --env expects KEY=VALUE, got '$1'" >&2
@@ -37,18 +44,20 @@ add_env() {
 }
 while [ $# -gt 0 ]; do
     case "$1" in
-        --kind)   KIND="${2:-}"; shift 2 ;;
-        --kind=*) KIND="${1#--kind=}"; shift ;;
-        --env)    add_env "${2:-}"; shift 2 ;;
-        --env=*)  add_env "${1#--env=}"; shift ;;
-        --)       shift; break ;;
-        -*)       echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
-        *)        break ;;
+        --kind)      KIND="${2:-}"; shift 2 ;;
+        --kind=*)    KIND="${1#--kind=}"; shift ;;
+        --env)       add_env "${2:-}"; shift 2 ;;
+        --env=*)     add_env "${1#--env=}"; shift ;;
+        --session)   SESSION_OVERRIDE="${2:-}"; shift 2 ;;
+        --session=*) SESSION_OVERRIDE="${1#--session=}"; shift ;;
+        --)          shift; break ;;
+        -*)          echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
+        *)           break ;;
     esac
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] <name> <cwd> [<role>]" >&2
     exit 1
 fi
 NAME="$1"
@@ -72,15 +81,22 @@ fi
 # Normalize to an absolute path so cwd-collision detection compares apples to
 # apples (workers_sharing_dir does an exact string match on stored DIR).
 CWD="$(cd "$CWD" && pwd)"
+
+# The session that will HOST the window (registry/state stay on $SESSION_NAME's team).
+WIN_SESSION="${SESSION_OVERRIDE:-$SESSION_NAME}"
+if [ -n "$SESSION_OVERRIDE" ] && [[ ! "$SESSION_OVERRIDE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "ERROR: invalid --session '$SESSION_OVERRIDE' (use only [a-zA-Z0-9_-])" >&2
+    exit 1
+fi
 # tmux defaults to prefix matching on -t, so `myteam` would accidentally
 # resolve to e.g. `myteam-other` if that exists. Use the `=name` prefix
 # to force exact-match. Auto-create an empty session if it doesn't exist —
 # spawn-worker is the canonical "invite to team" entrypoint, so requiring
 # users to manually run `tmux new-session` first is unnecessary friction.
-if ! tmux has-session -t "=$SESSION_NAME" 2>/dev/null; then
-    echo "tmux session '$SESSION_NAME' not found — creating empty session." >&2
-    tmux new-session -d -s "$SESSION_NAME" -c "$HOME" 2>/dev/null || {
-        echo "ERROR: failed to create tmux session '$SESSION_NAME'." >&2
+if ! tmux has-session -t "=$WIN_SESSION" 2>/dev/null; then
+    echo "tmux session '$WIN_SESSION' not found — creating empty session." >&2
+    tmux new-session -d -s "$WIN_SESSION" -c "$HOME" 2>/dev/null || {
+        echo "ERROR: failed to create tmux session '$WIN_SESSION'." >&2
         exit 1
     }
 fi
@@ -108,15 +124,15 @@ fi
 # Trailing colon forces target-session resolution: without it tmux treats the
 # name as a target-window, and an orchestrator's own window in its manager's
 # session (named identically to this team) makes the target ambiguous.
-tmux new-window -t "=$SESSION_NAME:" -n "$NAME" -c "$CWD"
+tmux new-window -t "=$WIN_SESSION:" -n "$NAME" -c "$CWD"
 
 # Lock the window name so claude's runtime version string (e.g. "2.1.150" — the
 # Node.js build, leaked through pane_current_command) doesn't overwrite "$NAME"
 # via tmux's automatic-rename. The resolver matches `session:window_name` from
 # the registry, so an auto-renamed window falls back to a target-shaped name in
 # the dashboard ("myteam:2.1" instead of the chosen worker name).
-tmux set-window-option -t "=$SESSION_NAME:$NAME" automatic-rename off >/dev/null
-tmux set-window-option -t "=$SESSION_NAME:$NAME" allow-rename off >/dev/null
+tmux set-window-option -t "=$WIN_SESSION:$NAME" automatic-rename off >/dev/null
+tmux set-window-option -t "=$WIN_SESSION:$NAME" allow-rename off >/dev/null
 
 # Pass agent flags + optional TEAM_CONTEXT_DIR through env so the wrapper can pick
 # it up. TEAM_CONTEXT_DIR (if set in config.env) lets the claude wrapper layer
@@ -126,24 +142,24 @@ CTX_DIR="${TEAM_CONTEXT_DIR:-}"
 if [ "$KIND" = "codex" ]; then
     LAUNCHER="$HERE/start-worker-codex.sh"
     if [ -x "$LAUNCHER" ]; then
-        tmux send-keys -t "=$SESSION_NAME:$NAME" \
+        tmux send-keys -t "=$WIN_SESSION:$NAME" \
             "${ENV_PREFIX}CODEX_FLAGS='${CODEX_FLAGS:-}' CODEX_MODEL='${CODEX_MODEL:-}' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
     else
         # Fallback to bare codex if wrapper missing (graceful degradation)
-        tmux send-keys -t "=$SESSION_NAME:$NAME" "${ENV_PREFIX}codex ${CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}" Enter
+        tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}codex ${CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}" Enter
     fi
 else
     LAUNCHER="$HERE/start-worker-claude.sh"
     if [ -x "$LAUNCHER" ]; then
-        tmux send-keys -t "=$SESSION_NAME:$NAME" \
+        tmux send-keys -t "=$WIN_SESSION:$NAME" \
             "${ENV_PREFIX}CLAUDE_FLAGS='$CLAUDE_FLAGS' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
     else
         # Fallback to bare claude if wrapper missing (graceful degradation)
-        tmux send-keys -t "=$SESSION_NAME:$NAME" "${ENV_PREFIX}claude $CLAUDE_FLAGS" Enter
+        tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}claude $CLAUDE_FLAGS" Enter
     fi
 fi
 
-TARGET="$SESSION_NAME:$NAME"
+TARGET="$WIN_SESSION:$NAME"
 
 SAFE="$(safe_name "$NAME")"
 
@@ -159,6 +175,11 @@ _persist_spawn_registration() {
         printf 'WORKER_%s_DIR=%q\n'    "$SAFE" "$CWD"
         printf 'WORKER_%s_ROLE=%q\n'   "$SAFE" "$ROLE"
         printf 'WORKER_%s_KIND=%q\n'   "$SAFE" "$KIND"
+        # Record a dedicated host session so kill-worker.sh can tell "ours,
+        # just in its own session" apart from an invited external pane.
+        if [ -n "$SESSION_OVERRIDE" ]; then
+            printf 'WORKER_%s_SESSION=%q\n' "$SAFE" "$WIN_SESSION"
+        fi
     } >> "$STATE_DIR/workers-runtime.env"
 
     # Record the calling pane as this team's orchestrator so the dashboard

@@ -94,8 +94,9 @@ def set_team(team: str) -> Dict[str, Any]:
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps({"team": team}))
     return {"ok": True, "team": team,
-            "note": f"Fleet session set. Orchestrators will live in tmux "
-                    f"session '{team}', state in ~/.darkarchon/{team}/."}
+            "note": f"Fleet name set. Registry and state live in "
+                    f"~/.darkarchon/{team}/; each employee gets its own tmux "
+                    f"session named after it."}
 
 
 def state_dir() -> Path:
@@ -149,6 +150,16 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     if not workdir.is_dir():
         return _err(f"cwd not found: {workdir}")
 
+    # The employee will own a tmux session named after it — refuse names that
+    # would splice windows into an unrelated pre-existing session.
+    probe = subprocess.run(["tmux", "has-session", "-t", f"={name}"],
+                           capture_output=True, text=True)
+    if probe.returncode == 0 and name not in _registry_names():
+        return _err(
+            f"a tmux session named '{name}' already exists and is not one of "
+            f"ours — pick a different employee name"
+        )
+
     # An employee charter: layered into the orchestrator's system prompt at
     # launch (start-worker-claude.sh reads <context_dir>/<role>.md as layer 4).
     # Passed via DARKARCHON_PROMPT_DIR — the documented override that
@@ -164,9 +175,12 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
         )
         extra_env["DARKARCHON_PROMPT_DIR"] = str(ctx_dir)
 
+    # --session <name>: each employee gets a DEDICATED tmux session named
+    # after it. Its own workers (DARKARCHON_TEAM=<name>) land in that same
+    # session, so one session == one employee + their whole sub-team.
     script = darkarchon_home() / "lib" / "spawn-worker.sh"
     proc = _run(
-        [str(script), "--env", f"DARKARCHON_TEAM={name}",
+        [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name,
          name, str(workdir), "orchestrator"],
         timeout=30, extra_env=extra_env,
     )
@@ -175,7 +189,8 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     return {
         "ok": True,
         "orchestrator": name,
-        "tmux_target": f"{manager_team()}:{name}",
+        "tmux_target": f"{name}:{name}",
+        "tmux_session": name,
         "cwd": str(workdir),
         "note": (
             "Claude takes ~15s to start. If a trust prompt appears in the tmux "
@@ -194,7 +209,20 @@ def kill(name: str) -> Dict[str, Any]:
     proc = _run([str(script), name], timeout=30)
     if proc.returncode != 0:
         return _err("kill failed", detail=(proc.stderr or proc.stdout).strip())
-    return {"ok": True, "orchestrator": name, "message": proc.stdout.strip()}
+    # The employee owned a whole session (itself + its worker windows) and a
+    # team registry. Tear both down so a future re-hire starts clean; task
+    # history (tasks.db etc.) under ~/.darkarchon/<name>/ is kept.
+    subprocess.run(["tmux", "kill-session", "-t", f"={name}"],
+                   capture_output=True, text=True)
+    prefix = os.environ.get("TOOL_PREFIX", "darkarchon")
+    reg = Path.home() / f".{prefix}" / name / "workers-runtime.env"
+    try:
+        reg.unlink()
+    except OSError:
+        pass
+    return {"ok": True, "orchestrator": name,
+            "message": proc.stdout.strip(),
+            "note": f"tmux session '{name}' (employee + its workers) removed."}
 
 
 # ── state / list ───────────────────────────────────────────────────────────
@@ -247,7 +275,7 @@ def list_orchestrators() -> Dict[str, Any]:
             "name": name,
             "state": st.get("state", "unknown"),
             "detail": st.get("detail", ""),
-            "target": st.get("target", f"{manager_team()}:{name}"),
+            "target": st.get("target", f"{name}:{name}"),
         })
     return {"ok": True, "team": manager_team(), "orchestrators": fleet}
 
