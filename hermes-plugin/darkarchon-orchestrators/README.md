@@ -21,11 +21,17 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 
 - **`orchestrator` tool** (toolset `orchestrator`) — actions:
   `set_team`, `spawn`, `dispatch`, `result`, `status`, `list`, `runs`,
-  `interrupt`, `kill`.
+  `questions`, `answer`, `interrupt`, `kill`.
   `dispatch` waits inline up to `wait_seconds` (default 120, max 540), then
   returns a `run_id` the model polls with `result`. Runs are recorded under
-  `~/.darkarchon/<team>/hermes-runs/` and survive Hermes restarts.
-- **`/orch` slash command** — fleet overview (`list`, `runs`) + `team [<name>]`.
+  `~/.darkarchon/<team>/hermes-runs/` and survive Hermes restarts. Fleet
+  dispatches run with `TASK_MAX_SECONDS=7200` (unless the env overrides it)
+  so the manager's clock outlives the orchestrator's own 3600s worker cap.
+  `questions`/`answer` surface questions orchestrators escalate via `ask`
+  (their only upward channel) and deliver the user's decision back by
+  mailbox.
+- **`/orch` slash command** — fleet overview (`list`, `runs`, `questions`) +
+  `team [<name>]`.
 
 ## Employee model
 

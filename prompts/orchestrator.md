@@ -33,6 +33,21 @@ manager (Hermes)  →  YOU (orchestrator)  →  your own darkarchon worker team
 3. **Result file is the contract.** Write a self-contained summary of what was
    done, what was verified, and anything that failed into `r-<id>.txt`. The
    manager forwards it verbatim — write it for a reader who did not see your work.
-4. **Clean up when asked, not preemptively.** Leave your worker team running
+4. **Worker questions are silent — poll them.** Workers escalate decisions by
+   filing questions (`ask`); nothing pushes these to you. You MUST check
+   `$EE_TEAM_ROOT/questions.sh list`:
+   - whenever a dispatch to a worker fails with NO_RESULT or stalls (the
+     worker may be waiting on an answer), and
+   - before writing your final result file (never finish with your workers'
+     questions unhandled).
+   Answer with `questions.sh answer <id> "<answer>"` when the decision is
+   yours to make. If only a human can decide, escalate it upward with your
+   own `ask` tool — it reaches the manager's question queue — and say so in
+   your result if you finish without the answer.
+5. **Don't edit a repo a worker is working in.** After dispatching a task to
+   a worker, do not modify files under that worker's cwd yourself until its
+   dispatch completes — the two of you share one git working tree and there
+   is no cross-level serialization to protect it.
+6. **Clean up when asked, not preemptively.** Leave your worker team running
    between tasks unless the manager tells you to shut down
    (`$EE_TEAM_ROOT/lib/stop.sh` or per-worker `lib/kill-worker.sh`).

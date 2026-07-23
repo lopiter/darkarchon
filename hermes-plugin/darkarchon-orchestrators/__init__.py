@@ -43,6 +43,13 @@ ORCHESTRATOR_SCHEMA = {
         "- status: one employee's live state (idle/busy/awaiting_user/...).\n"
         "- list: the whole staff with states.\n"
         "- runs: recent dispatch runs.\n"
+        "- questions: pending questions employees escalated to the manager. "
+        "Check this whenever a dispatch fails or stalls, and periodically — "
+        "questions are silent (no push). Relay them to the user and deliver "
+        "the user's decision back with action=answer.\n"
+        "- answer: answer a question (question_id + answer text). Only relay "
+        "the USER's decision — never invent an answer to a question that was "
+        "escalated for a human.\n"
         "- interrupt: stop tracking a run (does not kill the session).\n"
         "- kill: lay an employee off (only when the user asks, or on "
         "throwaway spawns).\n\n"
@@ -55,7 +62,8 @@ ORCHESTRATOR_SCHEMA = {
             "action": {
                 "type": "string",
                 "enum": ["set_team", "spawn", "dispatch", "result", "status",
-                         "list", "runs", "interrupt", "kill"],
+                         "list", "runs", "questions", "answer", "interrupt",
+                         "kill"],
                 "description": "Fleet operation to perform.",
             },
             "team": {
@@ -101,6 +109,17 @@ ORCHESTRATOR_SCHEMA = {
                 "type": "string",
                 "description": "Run identifier (result / interrupt).",
             },
+            "question_id": {
+                "type": "string",
+                "description": "Question identifier (answer only).",
+            },
+            "answer": {
+                "type": "string",
+                "description": (
+                    "answer only: the user's decision, relayed verbatim or "
+                    "faithfully summarized."
+                ),
+            },
             "wait_seconds": {
                 "type": "integer",
                 "description": (
@@ -136,6 +155,11 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
             out = orch.list_orchestrators()
         elif action == "runs":
             out = orch.runs()
+        elif action == "questions":
+            out = orch.questions()
+        elif action == "answer":
+            out = orch.answer(args.get("question_id") or "",
+                              args.get("answer") or "")
         elif action == "interrupt":
             out = orch.interrupt(run_id)
         elif action == "kill":
@@ -153,6 +177,7 @@ _HELP = """\
 Subcommands:
   list            Employees + live state (default)
   runs            Recent dispatch runs
+  questions       Pending questions escalated by employees
   team [<name>]   Show or set the fleet tmux session name
   help            This text
 
@@ -173,6 +198,17 @@ def _handle_slash(raw_args: str) -> str:
         team = orch.manager_team()
         return (f"Fleet session: '{team}'" if team
                 else "No fleet session name set yet. Use `/orch team <name>`.")
+    if cmd == "questions":
+        data = orch.questions()
+        if not data.get("ok"):
+            return f"Error: {data.get('error')}"
+        if not data["questions"]:
+            return "No pending questions."
+        lines = ["Pending questions (answer via chat — I'll relay):"]
+        for q in data["questions"]:
+            body = (q.get("body") or "").replace("\n", " ")[:100]
+            lines.append(f"  {q['question_id']}  [{q['from_worker']}] {body}")
+        return "\n".join(lines)
     if cmd == "runs":
         data = orch.runs()
         if not data.get("ok"):

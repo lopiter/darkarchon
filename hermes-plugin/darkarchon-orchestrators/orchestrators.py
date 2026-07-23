@@ -45,6 +45,12 @@ RESULT_TRUNCATE_CHARS = 8000
 LOG_TAIL_CHARS = 2000
 DISPATCH_WAIT_CAP_SECONDS = 540  # stay under hermes' 600s foreground tool cap
 
+# Fleet-level dispatch hard cap. Must exceed the orchestrator's own
+# worker-dispatch cap (darkarchon default 3600s) — both clocks run
+# concurrently and the fleet clock starts first, so equal budgets would
+# time the manager out while the orchestrator's worker task still runs.
+FLEET_TASK_MAX_SECONDS = "7200"
+
 
 def darkarchon_home() -> Path:
     return Path(os.environ.get("DARKARCHON_HOME", "~/work/darkarchon")).expanduser()
@@ -330,10 +336,12 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
     log_file = open(_log_path(run_id), "w")
     script = darkarchon_home() / "dispatch-safe.sh"
+    env = _env()
+    env.setdefault("TASK_MAX_SECONDS", FLEET_TASK_MAX_SECONDS)
     proc = subprocess.Popen(
         [str(script), name, "-"],
         stdin=subprocess.PIPE, stdout=log_file, stderr=subprocess.STDOUT,
-        text=True, env=_env(), cwd=str(darkarchon_home()),
+        text=True, env=env, cwd=str(darkarchon_home()),
         start_new_session=True,  # keep the poller alive across hermes restarts
     )
     log_file.close()
@@ -432,6 +440,44 @@ def runs(limit: int = 10) -> Dict[str, Any]:
                       ("run_id", "orchestrator", "status", "started_at",
                        "finished_at", "task_preview")})
     return {"ok": True, "runs": metas}
+
+
+# ── fleet-level questions (orchestrator → manager escalation) ──────────────
+
+def questions() -> Dict[str, Any]:
+    """Pending questions orchestrators filed via ask (they have no other
+    push channel up to the manager — surface these to the user)."""
+    if manager_team() is None:
+        return _err(_NO_TEAM)
+    qdir = state_dir() / "questions"
+    pending = []
+    for p in sorted(qdir.glob("*.json")):
+        try:
+            q = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if q.get("status") == "pending":
+            pending.append({k: q.get(k) for k in
+                            ("question_id", "from_worker", "body", "created_at")})
+    return {"ok": True, "team": manager_team(), "questions": pending}
+
+
+def answer(question_id: str, text: str) -> Dict[str, Any]:
+    """Answer a pending question — delivered to the asking orchestrator's
+    mailbox (it drains on its next MAILBOX_NOTIFY / dispatch turn)."""
+    if manager_team() is None:
+        return _err(_NO_TEAM)
+    question_id = (question_id or "").strip()
+    if not question_id or "/" in question_id or ".." in question_id:
+        return _err(f"invalid question_id '{question_id}'")
+    if not text or not text.strip():
+        return _err("answer text must be non-empty")
+    script = darkarchon_home() / "questions.sh"
+    proc = _run([str(script), "answer", question_id, text], timeout=30)
+    if proc.returncode != 0:
+        return _err("answer failed", detail=(proc.stderr or proc.stdout).strip())
+    return {"ok": True, "question_id": question_id,
+            "message": proc.stdout.strip()}
 
 
 def interrupt(run_id: str) -> Dict[str, Any]:
