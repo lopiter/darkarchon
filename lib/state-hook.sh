@@ -46,6 +46,13 @@ if not isinstance(detail, str):
 detail = detail.replace("\n", " ").strip()[:200]
 event = payload.get("hook_event_name", "") if isinstance(payload, dict) else ""
 
+# Claude Code fires Notification BOTH for permission prompts ("Claude needs
+# your permission to ...") and for a plain 60s-idle nudge ("Claude is waiting
+# for your input"). Only the former blocks dispatch; recording the idle nudge
+# as awaiting_user made every worker undispatchable after a minute of rest.
+if state == "awaiting_user" and "waiting for your input" in detail.lower():
+    state = "idle"
+
 safe = "".join(c if c.isalnum() or c == "_" else "_" for c in worker)
 d = os.path.join(sd, "states")
 os.makedirs(d, exist_ok=True)

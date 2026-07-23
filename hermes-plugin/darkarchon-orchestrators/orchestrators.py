@@ -79,10 +79,10 @@ def manager_team() -> Optional[str]:
 
 
 _NO_TEAM = (
-    "No fleet session name is set yet. Ask the user what to name the "
-    "orchestrator fleet's tmux session (this also namespaces state under "
-    "~/.darkarchon/<name>/), then call action=set_team with their answer. "
-    "Do not invent a name yourself."
+    "No fleet name is set yet. STOP — do NOT call set_team in this turn, and "
+    "do NOT make up a name. End your turn by ASKING THE USER what to name the "
+    "fleet (it namespaces state under ~/.darkarchon/<name>/). Call "
+    "action=set_team only in a later turn, with the name the user typed."
 )
 
 
