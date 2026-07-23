@@ -368,10 +368,16 @@ def _interrupted() -> bool:
 def _slack_notify(text: str) -> None:
     """POST a message to the Slack incoming webhook in
     $HERMES_ORCH_SLACK_WEBHOOK. Silently disabled when unset; best-effort
-    always — Slack being down must never affect fleet operation."""
+    always — Slack being down must never affect fleet operation.
+
+    Messages are prefixed with the fleet name so several machines can share
+    one notification channel and still be told apart."""
     url = os.environ.get("HERMES_ORCH_SLACK_WEBHOOK", "").strip()
     if not url:
         return
+    team = manager_team()
+    if team:
+        text = f"[{team}] {text}"
     try:
         import urllib.request
         req = urllib.request.Request(
