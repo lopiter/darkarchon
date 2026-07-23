@@ -41,9 +41,12 @@ ORCHESTRATOR_SCHEMA = {
         "External employees can be dispatched to but never killed — use "
         "uninvite to let one go (the session itself is left untouched).\n"
         "- uninvite: remove an invited employee from the roster.\n"
-        "- dispatch: assign a task. Waits up to wait_seconds (default 120) for "
-        "completion; if still running, returns a run_id to poll. Never "
-        "dispatch to an employee that already has a running dispatch.\n"
+        "- dispatch: assign a task. Waits up to wait_seconds (default 120) "
+        "for completion; if still running, returns a run_id and a completion "
+        "report is INJECTED into this conversation automatically when the "
+        "run finishes — tell the user it's running and end your turn instead "
+        "of polling. Never dispatch to an employee that already has a "
+        "running dispatch.\n"
         "- result: poll a run_id — returns running (+ log tail) or the final "
         "result text.\n"
         "- status: one employee's live state (idle/busy/awaiting_user/...).\n"
@@ -256,6 +259,7 @@ def _handle_slash(raw_args: str) -> str:
 
 
 def register(ctx) -> None:
+    orch.set_context(ctx)  # enables completion push via ctx.inject_message
     ctx.register_tool(
         name="orchestrator",
         toolset="orchestrator",
