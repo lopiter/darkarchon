@@ -623,13 +623,30 @@ def uninvite(name: str) -> Dict[str, Any]:
 
 # Questions are files with no push channel — employees drop them silently.
 # This watcher polls the fleet queue and raises each NEW pending question
-# once (per process lifetime) through _notify, so "I need a decision"
-# reaches the user without anyone running /orch questions. Pre-existing
-# pending questions re-notify once after a hermes restart — still awaiting
-# an answer, so that repeat is a feature.
+# once through _notify, so "I need a decision" reaches the user without
+# anyone running /orch questions. Several hermes processes may run this
+# watcher concurrently (the CLI session plus the messaging gateway share
+# one HERMES_HOME), so the once-guarantee is a filesystem marker claimed
+# with O_EXCL — exactly one process wins the right to notify a question.
 _QWATCH_STARTED = False
-_QWATCH_SEEN: set = set()
+_QWATCH_SEEN: set = set()  # cheap in-process short-circuit over the markers
 QUESTION_POLL_SECONDS = 15
+
+
+def _claim_question_notification(qid: str) -> bool:
+    """Atomically claim the right to notify question `qid`. First claimer
+    across ALL processes wins; markers persist so restarts don't re-notify."""
+    d = state_dir() / "notified-questions"
+    qid = "".join(c if c.isalnum() or c in "-_." else "_" for c in qid)[:120]
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / qid, "x") as fh:
+            fh.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        return False  # cannot prove we're first — better silent than twice
 
 
 def _questions_watcher() -> None:
@@ -647,6 +664,8 @@ def _questions_watcher() -> None:
                     if q.get("status") != "pending" or qid in _QWATCH_SEEN:
                         continue
                     _QWATCH_SEEN.add(qid)
+                    if not _claim_question_notification(qid):
+                        continue  # another hermes process already notified it
                     body = (q.get("body") or "").strip()
                     frm = q.get("from_worker", "?")
                     _notify(

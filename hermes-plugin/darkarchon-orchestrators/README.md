@@ -107,9 +107,13 @@ Create an incoming webhook (api.slack.com/apps → Incoming Webhooks → pick a
 channel), export it as `HERMES_ORCH_SLACK_WEBHOOK`, restart Hermes. You then
 get `:white_check_mark:/:x:` messages when dispatch runs finish and
 `:question:` messages the moment an employee escalates a decision — the
-question watcher polls the fleet queue every 15s, notifies each pending
-question once per process (pending ones re-notify once after a restart, on
-purpose). Slack delivery is best-effort and never blocks fleet operation.
+question watcher polls the fleet queue every 15s and notifies each question
+exactly once, even when several hermes processes (CLI session + messaging
+gateway) share one HERMES_HOME: the right to notify is claimed via an
+atomic filesystem marker under `<state>/notified-questions/`. Slack
+delivery is best-effort and never blocks fleet operation; messages are
+prefixed with the fleet name so machines sharing a channel stay
+distinguishable.
 
 ## How the namespacing works
 
