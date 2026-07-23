@@ -95,10 +95,21 @@ Restart Hermes to load it.
 
 ## Configuration (env)
 
-| Variable            | Default            | Meaning                                          |
-|---------------------|--------------------|--------------------------------------------------|
-| `DARKARCHON_HOME`   | `~/work/darkarchon`| darkarchon checkout to shell out to              |
-| `HERMES_ORCH_TEAM`  | `hermes`           | manager team → tmux session + `~/.darkarchon/<team>` |
+| Variable                    | Default            | Meaning                                          |
+|-----------------------------|--------------------|--------------------------------------------------|
+| `DARKARCHON_HOME`           | `~/work/darkarchon`| darkarchon checkout to shell out to              |
+| `HERMES_ORCH_TEAM`          | (asked at first use)| fleet name override → `~/.darkarchon/<team>`    |
+| `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack |
+
+## Slack notifications
+
+Create an incoming webhook (api.slack.com/apps → Incoming Webhooks → pick a
+channel), export it as `HERMES_ORCH_SLACK_WEBHOOK`, restart Hermes. You then
+get `:white_check_mark:/:x:` messages when dispatch runs finish and
+`:question:` messages the moment an employee escalates a decision — the
+question watcher polls the fleet queue every 15s, notifies each pending
+question once per process (pending ones re-notify once after a restart, on
+purpose). Slack delivery is best-effort and never blocks fleet operation.
 
 ## How the namespacing works
 
