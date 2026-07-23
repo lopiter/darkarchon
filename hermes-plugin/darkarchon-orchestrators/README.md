@@ -33,9 +33,13 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
   EXTERNAL employee: dispatchable, but state is scrape-detected (no hooks),
   no orchestrator contract prompt, and it can never be killed by the manager
   — only `uninvite`d (registry removal; the session is left untouched).
-  `dispatch` waits inline up to `wait_seconds` (default 120, max 540), then
-  returns a `run_id` the model polls with `result`. Runs are recorded under
-  `~/.darkarchon/<team>/hermes-runs/` and survive Hermes restarts. Fleet
+  `dispatch` waits inline up to `wait_seconds` (default 120, max 540); if the
+  run outlives that window, a watcher thread takes over and INJECTS a
+  completion report into the conversation when it finishes
+  (`ctx.inject_message`) — Hermes reports the outcome on its own, no polling.
+  Runs are recorded under `~/.darkarchon/<team>/hermes-runs/` and survive
+  Hermes restarts (notifications require Hermes to be running; catch up on
+  missed ones via `runs`/`result`). Fleet
   dispatches run with `TASK_MAX_SECONDS=7200` (unless the env overrides it)
   so the manager's clock outlives the orchestrator's own 3600s worker cap.
   `questions`/`answer` surface questions orchestrators escalate via `ask`

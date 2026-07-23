@@ -30,11 +30,23 @@ import re
 import secrets
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# PluginContext handed over by __init__.register(). Enables completion push:
+# a watcher thread injects a message into the hermes conversation when a
+# backgrounded dispatch finishes, so nobody has to poll. None outside hermes
+# (tests, direct use) — notification silently degrades to just finalizing.
+_CTX = None
+
+
+def set_context(ctx) -> None:
+    global _CTX
+    _CTX = ctx
 
 # In-memory handles for dispatches started by THIS hermes process. Survives
 # across tool calls (module lives as long as the process); after a hermes
@@ -352,6 +364,52 @@ def _interrupted() -> bool:
         return False
 
 
+def _notify(message: str) -> None:
+    """Push a message into the hermes conversation (no-op outside hermes)."""
+    if _CTX is None:
+        return
+    try:
+        _CTX.inject_message(message)
+    except Exception:
+        pass  # a broken notification must never take the watcher down
+
+
+def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
+    """Wait for a backgrounded dispatch to finish, finalize its run record,
+    and inject a completion report into the conversation. Runs as a daemon
+    thread — one per run that outlived its inline wait window."""
+    try:
+        code = proc.wait(timeout=int(FLEET_TASK_MAX_SECONDS) + 900)
+    except Exception:
+        code = None  # stuck beyond every cap — report, don't finalize as done
+    _PROCS.pop(run_id, None)
+
+    meta = _load_meta(run_id)
+    if meta is None or meta.get("status") == "cancelled":
+        return  # interrupted runs were cancelled deliberately — stay quiet
+
+    if code is None:
+        _notify(
+            f"[fleet-notification] Dispatch run {run_id} for employee "
+            f"'{meta.get('orchestrator')}' is STUCK past every timeout cap. "
+            f"Tell the user; suggest checking the employee's tmux session."
+        )
+        return
+
+    summary = _finalize(meta, code)
+    result_preview = (summary.get("result") or "").strip()
+    if len(result_preview) > 600:
+        result_preview = result_preview[:600] + " …(truncated)"
+    _notify(
+        f"[fleet-notification] Dispatch run {run_id} for employee "
+        f"'{summary.get('orchestrator')}' just finished — "
+        f"{summary.get('outcome')}.\n"
+        f"Result:\n{result_preview}\n\n"
+        f"Relay this outcome to the user now, briefly and in their language. "
+        f"Full text: orchestrator(action='result', run_id='{run_id}')."
+    )
+
+
 def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
@@ -397,15 +455,22 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
             break
         time.sleep(2)
 
+    # Outlived the inline window: hand off to a watcher thread that will
+    # finalize the run and push a completion report into the conversation.
+    threading.Thread(
+        target=_watch_and_notify, args=(run_id, proc),
+        daemon=True, name=f"fleet-watch-{run_id}",
+    ).start()
     return {
         "ok": True,
         "run_id": run_id,
         "orchestrator": name,
         "status": "running",
         "note": (
-            f"Still running after {wait_seconds}s wait. Poll with "
-            f"action=result run_id={run_id}. Long tasks are normal — the "
-            "orchestrator may be coordinating its own worker team."
+            f"Still running after {wait_seconds}s wait. A completion report "
+            f"will be injected into this conversation automatically when it "
+            f"finishes — tell the user it's running and END YOUR TURN; do "
+            f"not poll. (Manual check: action=result run_id={run_id}.)"
         ),
     }
 
@@ -564,11 +629,13 @@ def interrupt(run_id: str) -> Dict[str, Any]:
     meta = _load_meta(run_id)
     if meta is None:
         return _err(f"unknown run_id '{run_id}'")
+    # Mark cancelled BEFORE signalling: the completion watcher wakes on the
+    # SIGTERM and must see the cancellation, not report a spurious failure.
+    meta["status"] = "cancelled"
+    _save_meta(meta)
     try:
         os.killpg(int(meta["pid"]), signal.SIGTERM)
     except (OSError, ValueError) as exc:
         return _err(f"could not signal dispatcher: {exc}")
-    meta["status"] = "cancelled"
-    _save_meta(meta)
     return {"ok": True, "run_id": run_id, "status": "cancelled",
             "note": "Dispatcher stopped. The orchestrator session was not killed."}
