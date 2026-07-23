@@ -470,6 +470,55 @@ def runs(limit: int = 10) -> Dict[str, Any]:
     return {"ok": True, "runs": metas}
 
 
+# ── invite / uninvite (adopt an EXISTING session as an employee) ───────────
+
+TARGET_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_.-]+$")
+
+
+def invite(name: str, target: str) -> Dict[str, Any]:
+    """Register an already-running Claude session (tmux session:window) as an
+    employee, without spawning anything. Marked EXTERNAL — hermess can
+    dispatch to it but never kills it; remove with uninvite."""
+    if manager_team() is None:
+        return _err(_NO_TEAM)
+    if not name or not NAME_RE.match(name):
+        return _err(f"invalid employee name '{name}'")
+    target = (target or "").strip()
+    if not TARGET_RE.match(target):
+        return _err(f"invalid target '{target}' (expected session:window)")
+    script = darkarchon_home() / "invite-worker.sh"
+    proc = _run([str(script), name, target, "orchestrator"], timeout=30)
+    if proc.returncode != 0:
+        return _err("invite failed", detail=(proc.stderr or proc.stdout).strip())
+    return {
+        "ok": True,
+        "orchestrator": name,
+        "tmux_target": target,
+        "external": True,
+        "note": (
+            "Adopted the existing session as an employee. Caveats: its state "
+            "is detected by screen-scraping (it has no hook wiring), it did "
+            "not receive the orchestrator contract prompt, and its own "
+            "sub-team namespace is whatever its environment already uses. "
+            "It cannot be killed by the manager — use uninvite to let it go."
+        ),
+    }
+
+
+def uninvite(name: str) -> Dict[str, Any]:
+    """Drop an invited (external) employee from the registry. The session
+    itself is untouched — it belongs to the user."""
+    if manager_team() is None:
+        return _err(_NO_TEAM)
+    if not name or not NAME_RE.match(name):
+        return _err(f"invalid employee name '{name}'")
+    script = darkarchon_home() / "uninvite-worker.sh"
+    proc = _run([str(script), name], timeout=30)
+    if proc.returncode != 0:
+        return _err("uninvite failed", detail=(proc.stderr or proc.stdout).strip())
+    return {"ok": True, "orchestrator": name, "message": proc.stdout.strip()}
+
+
 # ── fleet-level questions (orchestrator → manager escalation) ──────────────
 
 def questions() -> Dict[str, Any]:

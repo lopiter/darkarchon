@@ -36,6 +36,11 @@ ORCHESTRATOR_SCHEMA = {
         "injected into its system prompt). Each employee gets its OWN tmux "
         "session named after it, where its sub-workers also live. Takes ~15s "
         "to boot; check with status before the first dispatch.\n"
+        "- invite: adopt an ALREADY-RUNNING Claude session (target = "
+        "'session:window') as an employee instead of spawning a new one. "
+        "External employees can be dispatched to but never killed — use "
+        "uninvite to let one go (the session itself is left untouched).\n"
+        "- uninvite: remove an invited employee from the roster.\n"
         "- dispatch: assign a task. Waits up to wait_seconds (default 120) for "
         "completion; if still running, returns a run_id to poll. Never "
         "dispatch to an employee that already has a running dispatch.\n"
@@ -62,9 +67,9 @@ ORCHESTRATOR_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["set_team", "spawn", "dispatch", "result", "status",
-                         "list", "runs", "questions", "answer", "interrupt",
-                         "kill"],
+                "enum": ["set_team", "spawn", "invite", "uninvite", "dispatch",
+                         "result", "status", "list", "runs", "questions",
+                         "answer", "interrupt", "kill"],
                 "description": "Fleet operation to perform.",
             },
             "team": {
@@ -87,6 +92,13 @@ ORCHESTRATOR_SCHEMA = {
                 "description": (
                     "Working directory for the new session (spawn only). "
                     "Usually the repo the employee will primarily own."
+                ),
+            },
+            "target": {
+                "type": "string",
+                "description": (
+                    "invite only: tmux location of the existing Claude "
+                    "session, as 'session:window' (e.g. 'sec-orch:1')."
                 ),
             },
             "brief": {
@@ -145,6 +157,10 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
                              args.get("brief") or "")
+        elif action == "invite":
+            out = orch.invite(name, args.get("target") or "")
+        elif action == "uninvite":
+            out = orch.uninvite(name)
         elif action == "dispatch":
             out = orch.dispatch(name, args.get("task") or "",
                                 args.get("wait_seconds", 120))

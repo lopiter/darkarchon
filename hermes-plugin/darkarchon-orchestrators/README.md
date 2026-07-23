@@ -27,8 +27,12 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 ## What it registers
 
 - **`orchestrator` tool** (toolset `orchestrator`) — actions:
-  `set_team`, `spawn`, `dispatch`, `result`, `status`, `list`, `runs`,
-  `questions`, `answer`, `interrupt`, `kill`.
+  `set_team`, `spawn`, `invite`, `uninvite`, `dispatch`, `result`, `status`,
+  `list`, `runs`, `questions`, `answer`, `interrupt`, `kill`.
+  `invite` adopts an already-running Claude session (`session:window`) as an
+  EXTERNAL employee: dispatchable, but state is scrape-detected (no hooks),
+  no orchestrator contract prompt, and it can never be killed by the manager
+  — only `uninvite`d (registry removal; the session is left untouched).
   `dispatch` waits inline up to `wait_seconds` (default 120, max 540), then
   returns a `run_id` the model polls with `result`. Runs are recorded under
   `~/.darkarchon/<team>/hermes-runs/` and survive Hermes restarts. Fleet
