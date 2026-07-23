@@ -26,11 +26,15 @@ source "$HERE/lib/_lib.sh"
 
 # Optional --kind overrides auto-detection (claude|codex). Default: auto-detect
 # from pane content below.
+# --force skips the duplicate-target refusal (a pane already registered in any
+# team) for the rare case where dual membership is truly intended.
 KIND=""
+FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --kind)   KIND="${2:-}"; shift 2 ;;
         --kind=*) KIND="${1#--kind=}"; shift ;;
+        --force)  FORCE=1; shift ;;
         --)       shift; break ;;
         -*)       echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
         *)        break ;;
@@ -38,11 +42,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] <name> <session:window> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] [--force] <name> <session:window> [<role>]" >&2
     echo "  <name>            worker handle (sanitized; matches what dispatch.sh accepts)" >&2
     echo "  <session:window>  tmux target of the existing Claude/codex pane" >&2
     echo "  <role>            free-form label (default: worker-invited)" >&2
     echo "  --kind            force agent flavor; omit to auto-detect from pane" >&2
+    echo "  --force           allow a pane that is already registered in another team" >&2
     exit 1
 fi
 NAME="$1"
@@ -86,6 +91,36 @@ if ! tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qx "$WIN" \
     echo "Available windows in '$SESSION':" >&2
     tmux list-windows -t "$SESSION" -F '  #I:#W' >&2
     exit 1
+fi
+
+# Refuse a pane that is already registered in ANY team (this one included).
+# One pane serving two managers races on dispatch triggers (no cross-team
+# lock) and its ask/question queue only ever reaches one of them. Targets are
+# canonicalized to session_name:window_index so "sess:1" and "sess:winname"
+# registrations of the same pane still match; dead registrations (target no
+# longer resolvable) never block. --force bypasses for intentional dual use.
+_canon_target() {
+    tmux display-message -p -t "=$1" '#{session_name}:#{window_index}' 2>/dev/null || true
+}
+NEW_CANON="$(_canon_target "$TARGET")"
+if [ -n "$NEW_CANON" ] && [ "$FORCE" -eq 0 ]; then
+    for REG in "$HOME/.${TOOL_PREFIX:-darkarchon}"/*/workers-runtime.env; do
+        [ -f "$REG" ] || continue
+        OWNER_TEAM="$(basename "$(dirname "$REG")")"
+        while IFS= read -r REG_LINE; do
+            case "$REG_LINE" in
+                WORKER_*_TARGET=*)
+                    OWNER_SN="${REG_LINE#WORKER_}"; OWNER_SN="${OWNER_SN%%_TARGET=*}"
+                    VAL="${REG_LINE#*=}"; VAL="${VAL%\'}"; VAL="${VAL#\'}"
+                    [ -z "$VAL" ] && continue
+                    if [ "$(_canon_target "$VAL")" = "$NEW_CANON" ]; then
+                        echo "ERROR: pane '$TARGET' is already registered as worker '$OWNER_SN' in team '$OWNER_TEAM'." >&2
+                        echo "One pane must serve one manager — uninvite/kill it there first, or re-run with --force." >&2
+                        exit 1
+                    fi ;;
+            esac
+        done < "$REG"
+    done
 fi
 
 # Derive cwd (best effort)

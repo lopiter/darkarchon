@@ -33,16 +33,20 @@ if [ -z "$TARGET" ]; then
     exit 1
 fi
 
-# Kill the tmux window (only if it's part of OUR session — refuse to kill external pre-existing panes)
-if [ "${TARGET%%:*}" != "$SESSION_NAME" ]; then
+SAFE="$(safe_name "$NAME")"
+
+# Kill the tmux window only if it's OURS: either in this team's session, or in
+# a dedicated session we created for it at spawn time (--session, recorded as
+# WORKER_<sn>_SESSION). Anything else is an invited external pane — refuse.
+_SESSION_VAR="WORKER_${SAFE}_SESSION"
+SPAWNED_SESSION="${!_SESSION_VAR:-}"
+if [ "${TARGET%%:*}" != "$SESSION_NAME" ] && [ "${TARGET%%:*}" != "$SPAWNED_SESSION" ]; then
     echo "ERROR: refuse to kill external worker '$NAME' at '$TARGET'." >&2
     echo "Only manage panes inside session '$SESSION_NAME'." >&2
     exit 1
 fi
 
 tmux kill-window -t "=$TARGET" 2>/dev/null || true
-
-SAFE="$(safe_name "$NAME")"
 
 # Strip from runtime registry under a lock — concurrent spawn appending while
 # we rewrite would lose that spawn's entry.

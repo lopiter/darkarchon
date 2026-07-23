@@ -1,0 +1,4 @@
+name: darkarchon-orchestrators
+version: "1.0.0"
+description: "Manage a fleet of tmux-based Claude Code orchestrators via darkarchon: spawn sessions, dispatch tasks, poll results, inspect state, kill."
+author: "lopiter"
