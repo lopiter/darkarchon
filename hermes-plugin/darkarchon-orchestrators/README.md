@@ -101,6 +101,24 @@ Restart Hermes to load it.
 | `HERMES_ORCH_TEAM`          | (asked at first use)| fleet name override → `~/.darkarchon/<team>`    |
 | `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack |
 
+## Slack gateway (two-way, optional)
+
+To command the fleet FROM Slack, set up a hermes Slack gateway (Socket Mode
+app via `hermes slack manifest` + `hermes gateway setup`; remember
+`SLACK_ALLOWED_USERS=<your member id>` — an empty allowlist denies everyone).
+Expose ONLY the orchestrator toolset to the Slack surface:
+
+```yaml
+platform_toolsets:
+  slack:
+    - orchestrator
+```
+
+Small routing models reliably pick the right tool when it is the only one;
+mixing in file/terminal makes them wander (and a phone surface should not
+have terminal access anyway). Completion reports for gateway-dispatched runs
+arrive via the webhook channel (in-conversation injection is CLI-only).
+
 ## Slack notifications
 
 Create an incoming webhook (api.slack.com/apps → Incoming Webhooks → pick a
