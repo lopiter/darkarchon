@@ -64,17 +64,20 @@ Read your own `~/.hermes/config.yaml` (or `$HERMES_HOME/config.yaml`).
 Ask the user whether they want Slack notifications (dispatch completions and
 employee questions pushed to a Slack channel). If yes, ask them for their
 Slack incoming-webhook URL (they create it at api.slack.com/apps → Incoming
-Webhooks; never invent or reuse one you found elsewhere), then append to
-their shell profile:
+Webhooks; never invent or reuse one you found elsewhere), then append it to
+`~/.hermes/.env` (NOT the shell profile):
 
 ```bash
-echo "export HERMES_ORCH_SLACK_WEBHOOK='<their URL>'" >> ~/.zshrc
+echo "HERMES_ORCH_SLACK_WEBHOOK=<their URL>" >> ~/.hermes/.env
 ```
 
-This variable is read by the plugin only — it is not a Hermes core setting.
-The same URL may be shared across machines; all of them will post to the
-same channel. If they skip this, notifications still appear in the Hermes
-conversation itself.
+It MUST go in `~/.hermes/.env`, not `~/.zshrc`: Hermes loads `.env` into
+every process (including the launchd/systemd gateway), whereas a shell-only
+export is invisible to the background gateway — and then whichever process
+claims the notification marker first (often the gateway) drops the send
+silently. This variable is read by the plugin only, not a Hermes core
+setting. The same URL may be shared across machines (all post to the same
+channel). If skipped, notifications still appear in the Hermes conversation.
 
 ## Step 6 — Verify
 

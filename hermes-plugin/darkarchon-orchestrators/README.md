@@ -99,7 +99,7 @@ Restart Hermes to load it.
 |-----------------------------|--------------------|--------------------------------------------------|
 | `DARKARCHON_HOME`           | `~/work/darkarchon`| darkarchon checkout to shell out to              |
 | `HERMES_ORCH_TEAM`          | (asked at first use)| fleet name override → `~/.darkarchon/<team>`    |
-| `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack |
+| `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack. Set it in `~/.hermes/.env` so the background gateway sees it too (see below). |
 
 ## Slack gateway (two-way, optional)
 
@@ -122,7 +122,17 @@ arrive via the webhook channel (in-conversation injection is CLI-only).
 ## Slack notifications
 
 Create an incoming webhook (api.slack.com/apps → Incoming Webhooks → pick a
-channel), export it as `HERMES_ORCH_SLACK_WEBHOOK`, restart Hermes. You then
+channel), then put it in **`~/.hermes/.env`** (NOT your shell profile):
+
+```
+HERMES_ORCH_SLACK_WEBHOOK=https://hooks.slack.com/services/...
+```
+
+`~/.hermes/.env` is loaded into the environment of *every* Hermes process,
+including the launchd/systemd gateway — a webhook exported only in `~/.zshrc`
+is invisible to the background gateway, so whichever process claims the
+notification marker first (often the gateway) would silently drop the send.
+Restart Hermes (and `hermes gateway restart`) after setting it. You then
 get `:white_check_mark:/:x:` messages when dispatch runs finish and
 `:question:` messages the moment an employee escalates a decision — the
 question watcher polls the fleet queue every 15s and notifies each question
