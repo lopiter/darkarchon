@@ -50,6 +50,10 @@ Done. Reminders:
   (export DARKARCHON_HOME=$(cd "$HERE/.." && pwd) if it is not ~/work/darkarchon).
 - Restart Hermes to load the plugin. On first use it will ask the user to name
   the fleet's tmux session (per-HERMES_HOME; HERMES_ORCH_TEAM env overrides).
+- Optional Slack notifications (completions + employee questions): export
+  HERMES_ORCH_SLACK_WEBHOOK=<Slack incoming-webhook URL> in ~/.hermes/.env
+  (NOT ~/.zshrc — .env reaches the background gateway; a shell export does not).
+  Plugin-only variable; unset = disabled; the same URL works on every machine.
 - Running several Hermes instances on ONE machine: give each its own
   HERMES_HOME (or HERMES_ORCH_TEAM) so each manager gets its own fleet —
   two managers sharing a fleet will race on the same orchestrators.

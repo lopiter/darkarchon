@@ -47,6 +47,7 @@ _CTX = None
 def set_context(ctx) -> None:
     global _CTX
     _CTX = ctx
+    _ensure_question_watcher()
 
 # In-memory handles for dispatches started by THIS hermes process. Survives
 # across tool calls (module lives as long as the process); after a hermes
@@ -364,8 +365,36 @@ def _interrupted() -> bool:
         return False
 
 
-def _notify(message: str) -> None:
-    """Push a message into the hermes conversation (no-op outside hermes)."""
+def _slack_notify(text: str) -> None:
+    """POST a message to the Slack incoming webhook in
+    $HERMES_ORCH_SLACK_WEBHOOK. Silently disabled when unset; best-effort
+    always — Slack being down must never affect fleet operation.
+
+    Messages are prefixed with the fleet name so several machines can share
+    one notification channel and still be told apart."""
+    url = os.environ.get("HERMES_ORCH_SLACK_WEBHOOK", "").strip()
+    if not url:
+        return
+    team = manager_team()
+    if team:
+        text = f"[{team}] {text}"
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"text": text}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+
+
+def _notify(message: str, slack_text: Optional[str] = None) -> None:
+    """Push a message into the hermes conversation (no-op outside hermes)
+    and, when slack_text is given, mirror a short form to Slack."""
+    if slack_text:
+        _slack_notify(slack_text)
     if _CTX is None:
         return
     try:
@@ -392,7 +421,9 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
         _notify(
             f"[fleet-notification] Dispatch run {run_id} for employee "
             f"'{meta.get('orchestrator')}' is STUCK past every timeout cap. "
-            f"Tell the user; suggest checking the employee's tmux session."
+            f"Tell the user; suggest checking the employee's tmux session.",
+            slack_text=(f":warning: *{meta.get('orchestrator')}* run {run_id} "
+                        f"is stuck past every timeout cap — check its tmux session."),
         )
         return
 
@@ -400,13 +431,17 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
     result_preview = (summary.get("result") or "").strip()
     if len(result_preview) > 600:
         result_preview = result_preview[:600] + " …(truncated)"
+    emoji = ":white_check_mark:" if summary.get("ok") else ":x:"
     _notify(
         f"[fleet-notification] Dispatch run {run_id} for employee "
         f"'{summary.get('orchestrator')}' just finished — "
         f"{summary.get('outcome')}.\n"
         f"Result:\n{result_preview}\n\n"
         f"Relay this outcome to the user now, briefly and in their language. "
-        f"Full text: orchestrator(action='result', run_id='{run_id}')."
+        f"Full text: orchestrator(action='result', run_id='{run_id}').",
+        slack_text=(f"{emoji} *{summary.get('orchestrator')}* — "
+                    f"{summary.get('outcome')} (run {run_id})\n"
+                    f"{result_preview[:300]}"),
     )
 
 
@@ -585,6 +620,78 @@ def uninvite(name: str) -> Dict[str, Any]:
 
 
 # ── fleet-level questions (orchestrator → manager escalation) ──────────────
+
+# Questions are files with no push channel — employees drop them silently.
+# This watcher polls the fleet queue and raises each NEW pending question
+# once through _notify, so "I need a decision" reaches the user without
+# anyone running /orch questions. Several hermes processes may run this
+# watcher concurrently (the CLI session plus the messaging gateway share
+# one HERMES_HOME), so the once-guarantee is a filesystem marker claimed
+# with O_EXCL — exactly one process wins the right to notify a question.
+_QWATCH_STARTED = False
+_QWATCH_SEEN: set = set()  # cheap in-process short-circuit over the markers
+QUESTION_POLL_SECONDS = 15
+
+
+def _claim_question_notification(qid: str) -> bool:
+    """Atomically claim the right to notify question `qid`. First claimer
+    across ALL processes wins; markers persist so restarts don't re-notify."""
+    d = state_dir() / "notified-questions"
+    qid = "".join(c if c.isalnum() or c in "-_." else "_" for c in qid)[:120]
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / qid, "x") as fh:
+            fh.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        return False  # cannot prove we're first — better silent than twice
+
+
+def _questions_watcher() -> None:
+    while True:
+        try:
+            if manager_team() is not None:
+                qdir = state_dir() / "questions"
+                files = sorted(qdir.glob("*.json")) if qdir.is_dir() else []
+                for p in files:
+                    try:
+                        q = json.loads(p.read_text())
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    qid = q.get("question_id") or p.stem
+                    if q.get("status") != "pending" or qid in _QWATCH_SEEN:
+                        continue
+                    _QWATCH_SEEN.add(qid)
+                    if not _claim_question_notification(qid):
+                        continue  # another hermes process already notified it
+                    body = (q.get("body") or "").strip()
+                    frm = q.get("from_worker", "?")
+                    _notify(
+                        f"[fleet-notification] Employee '{frm}' escalated a "
+                        f"question that needs a HUMAN decision "
+                        f"(id {qid}):\n{body[:500]}\n\n"
+                        f"Relay it to the user now, in their language. Never "
+                        f"answer it yourself — when the user decides, send it "
+                        f"back with orchestrator(action='answer', "
+                        f"question_id='{qid}', answer=<their decision>).",
+                        slack_text=(f":question: *{frm}* needs your decision "
+                                    f"(id {qid}):\n{body[:300]}"),
+                    )
+        except Exception:
+            pass  # the watcher must survive anything
+        time.sleep(QUESTION_POLL_SECONDS)
+
+
+def _ensure_question_watcher() -> None:
+    global _QWATCH_STARTED
+    if _QWATCH_STARTED:
+        return
+    _QWATCH_STARTED = True
+    threading.Thread(target=_questions_watcher, daemon=True,
+                     name="fleet-question-watch").start()
+
 
 def questions() -> Dict[str, Any]:
     """Pending questions orchestrators filed via ask (they have no other

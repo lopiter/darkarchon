@@ -95,10 +95,53 @@ Restart Hermes to load it.
 
 ## Configuration (env)
 
-| Variable            | Default            | Meaning                                          |
-|---------------------|--------------------|--------------------------------------------------|
-| `DARKARCHON_HOME`   | `~/work/darkarchon`| darkarchon checkout to shell out to              |
-| `HERMES_ORCH_TEAM`  | `hermes`           | manager team → tmux session + `~/.darkarchon/<team>` |
+| Variable                    | Default            | Meaning                                          |
+|-----------------------------|--------------------|--------------------------------------------------|
+| `DARKARCHON_HOME`           | `~/work/darkarchon`| darkarchon checkout to shell out to              |
+| `HERMES_ORCH_TEAM`          | (asked at first use)| fleet name override → `~/.darkarchon/<team>`    |
+| `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack. Set it in `~/.hermes/.env` so the background gateway sees it too (see below). |
+
+## Slack gateway (two-way, optional)
+
+To command the fleet FROM Slack, set up a hermes Slack gateway (Socket Mode
+app via `hermes slack manifest` + `hermes gateway setup`; remember
+`SLACK_ALLOWED_USERS=<your member id>` — an empty allowlist denies everyone).
+Expose ONLY the orchestrator toolset to the Slack surface:
+
+```yaml
+platform_toolsets:
+  slack:
+    - orchestrator
+```
+
+Small routing models reliably pick the right tool when it is the only one;
+mixing in file/terminal makes them wander (and a phone surface should not
+have terminal access anyway). Completion reports for gateway-dispatched runs
+arrive via the webhook channel (in-conversation injection is CLI-only).
+
+## Slack notifications
+
+Create an incoming webhook (api.slack.com/apps → Incoming Webhooks → pick a
+channel), then put it in **`~/.hermes/.env`** (NOT your shell profile):
+
+```
+HERMES_ORCH_SLACK_WEBHOOK=https://hooks.slack.com/services/...
+```
+
+`~/.hermes/.env` is loaded into the environment of *every* Hermes process,
+including the launchd/systemd gateway — a webhook exported only in `~/.zshrc`
+is invisible to the background gateway, so whichever process claims the
+notification marker first (often the gateway) would silently drop the send.
+Restart Hermes (and `hermes gateway restart`) after setting it. You then
+get `:white_check_mark:/:x:` messages when dispatch runs finish and
+`:question:` messages the moment an employee escalates a decision — the
+question watcher polls the fleet queue every 15s and notifies each question
+exactly once, even when several hermes processes (CLI session + messaging
+gateway) share one HERMES_HOME: the right to notify is claimed via an
+atomic filesystem marker under `<state>/notified-questions/`. Slack
+delivery is best-effort and never blocks fleet operation; messages are
+prefixed with the fleet name so machines sharing a channel stay
+distinguishable.
 
 ## How the namespacing works
 
