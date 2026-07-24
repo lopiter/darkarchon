@@ -152,7 +152,21 @@ def _err(message: str, **extra: Any) -> Dict[str, Any]:
 
 # ── spawn / kill ───────────────────────────────────────────────────────────
 
-def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
+def _safe_name(name: str) -> str:
+    """Same scheme as safe_name() in lib/_lib.sh / worker_state.py."""
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+
+
+def _recorded_session_id(name: str) -> str:
+    """Last Claude session id the state hook recorded for this employee."""
+    f = state_dir() / "states" / f"{_safe_name(name)}.json"
+    try:
+        return str(json.loads(f.read_text()).get("session_id") or "")
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
+def spawn(name: str, cwd: str, brief: str = "", resume: bool = False) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
@@ -162,6 +176,32 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     workdir = Path(cwd).expanduser()
     if not workdir.is_dir():
         return _err(f"cwd not found: {workdir}")
+
+    resume_id = ""
+    if resume:
+        resume_id = _recorded_session_id(name)
+        if not resume_id:
+            return _err(
+                f"no recorded Claude session for '{name}' — it was never "
+                f"spawned with state hooks (or predates them). Spawn fresh "
+                f"instead (resume=false)."
+            )
+        # A rebooted/killed employee is usually still in the registry. Clear
+        # the dead registration (and its leftover session + sub-team registry,
+        # same as a lay-off) so the respawn isn't refused as a duplicate. A
+        # LIVE employee is never touched — resume only replaces the dead.
+        if name in _registry_names():
+            st = status(name)
+            if st.get("state") != "dead":
+                return _err(
+                    f"employee '{name}' is registered and {st.get('state')} — "
+                    f"resume only applies to a dead one. Kill it first if you "
+                    f"really want a restart."
+                )
+            cleared = kill(name)
+            if not cleared.get("ok"):
+                return _err("could not clear the dead registration",
+                            detail=cleared.get("error", ""))
 
     # The employee will own a tmux session named after it — refuse names that
     # would splice windows into an unrelated pre-existing session.
@@ -192,11 +232,11 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     # after it. Its own workers (DARKARCHON_TEAM=<name>) land in that same
     # session, so one session == one employee + their whole sub-team.
     script = darkarchon_home() / "lib" / "spawn-worker.sh"
-    proc = _run(
-        [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name,
-         name, str(workdir), "orchestrator"],
-        timeout=30, extra_env=extra_env,
-    )
+    args = [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name]
+    if resume_id:
+        args += ["--resume-session", resume_id]
+    args += [name, str(workdir), "orchestrator"]
+    proc = _run(args, timeout=30, extra_env=extra_env)
     if proc.returncode != 0:
         return _err("spawn failed", detail=(proc.stderr or proc.stdout).strip())
     return {
@@ -205,10 +245,14 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
         "tmux_target": f"{name}:{name}",
         "tmux_session": name,
         "cwd": str(workdir),
+        "resumed": bool(resume_id),
         "note": (
-            "Claude takes ~15s to start. If a trust prompt appears in the tmux "
-            "window the user must attach and hit Enter once. Check readiness "
-            "with action=status before the first dispatch."
+            ("Re-hired with its previous conversation restored (claude "
+             f"--resume). Its own sub-workers were reset — it may need to "
+             "respawn them. " if resume_id else "")
+            + "Claude takes ~15s to start. If a trust prompt appears in the "
+            "tmux window the user must attach and hit Enter once. Check "
+            "readiness with action=status before the first dispatch."
         ),
     }
 

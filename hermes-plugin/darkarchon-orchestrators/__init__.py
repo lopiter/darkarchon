@@ -35,7 +35,11 @@ ORCHESTRATOR_SCHEMA = {
         "- spawn: hire an employee (name + cwd + optional brief = job charter "
         "injected into its system prompt). Each employee gets its OWN tmux "
         "session named after it, where its sub-workers also live. Takes ~15s "
-        "to boot; check with status before the first dispatch.\n"
+        "to boot; check with status before the first dispatch. When an "
+        "employee died (PC reboot, killed session) pass resume=true to "
+        "re-hire it with its previous conversation restored — use this "
+        "whenever the user asks to bring back / 다시 출근 a former employee "
+        "instead of hiring fresh.\n"
         "- invite: adopt an ALREADY-RUNNING Claude session (target = "
         "'session:window') as an employee instead of spawning a new one. "
         "External employees can be dispatched to but never killed — use "
@@ -113,6 +117,15 @@ ORCHESTRATOR_SCHEMA = {
                     "prompt, so it shapes every future task."
                 ),
             },
+            "resume": {
+                "type": "boolean",
+                "description": (
+                    "spawn only: re-hire a DEAD employee with its previous "
+                    "Claude conversation restored (recorded session id + "
+                    "claude --resume). Refused if the employee is alive or "
+                    "has no recorded session. Its sub-workers are reset."
+                ),
+            },
             "task": {
                 "type": "string",
                 "description": (
@@ -159,7 +172,8 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
             out = orch.set_team(args.get("team") or "")
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
-                             args.get("brief") or "")
+                             args.get("brief") or "",
+                             bool(args.get("resume")))
         elif action == "invite":
             out = orch.invite(name, args.get("target") or "")
         elif action == "uninvite":
