@@ -126,6 +126,17 @@ ORCHESTRATOR_SCHEMA = {
                     "has no recorded session. Its sub-workers are reset."
                 ),
             },
+            "session_id": {
+                "type": "string",
+                "description": (
+                    "spawn only: hire a NEW employee that CONTINUES an "
+                    "existing Claude conversation with this session id "
+                    "(e.g. promoting the user's own past session — they get "
+                    "it from /status inside that session). cwd must match "
+                    "the session's original cwd, and the original session "
+                    "should be closed first. Do not combine with resume."
+                ),
+            },
             "task": {
                 "type": "string",
                 "description": (
@@ -173,7 +184,8 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
                              args.get("brief") or "",
-                             bool(args.get("resume")))
+                             bool(args.get("resume")),
+                             args.get("session_id") or "")
         elif action == "invite":
             out = orch.invite(name, args.get("target") or "")
         elif action == "uninvite":

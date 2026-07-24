@@ -166,7 +166,11 @@ def _recorded_session_id(name: str) -> str:
         return ""
 
 
-def spawn(name: str, cwd: str, brief: str = "", resume: bool = False) -> Dict[str, Any]:
+SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]+$")
+
+
+def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
+          session_id: str = "") -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
@@ -178,7 +182,30 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False) -> Dict[st
         return _err(f"cwd not found: {workdir}")
 
     resume_id = ""
-    if resume:
+    session_id = (session_id or "").strip()
+    if session_id:
+        # Promote an arbitrary Claude conversation (e.g. the user's own past
+        # session) into a NEW employee that continues it.
+        if not SESSION_ID_RE.match(session_id):
+            return _err(f"invalid session_id '{session_id}'")
+        if name in _registry_names():
+            return _err(
+                f"'{name}' is already registered — session_id is for hiring a "
+                f"NEW employee onto an existing conversation. Use resume=true "
+                f"to re-hire a dead employee, or pick another name."
+            )
+        # Claude transcripts live under ~/.claude/projects/<cwd-slug>/. Verify
+        # the id exists at all so a typo fails here instead of as a broken pane.
+        hits = list((Path.home() / ".claude" / "projects").glob(
+            f"*/{session_id}.jsonl"))
+        if not hits:
+            return _err(
+                f"no Claude session '{session_id}' found on this machine. "
+                f"Get the id via /status inside the session, and note the "
+                f"employee's cwd must match the session's original cwd."
+            )
+        resume_id = session_id
+    elif resume:
         resume_id = _recorded_session_id(name)
         if not resume_id:
             return _err(
@@ -247,8 +274,10 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False) -> Dict[st
         "cwd": str(workdir),
         "resumed": bool(resume_id),
         "note": (
-            ("Re-hired with its previous conversation restored (claude "
-             f"--resume). Its own sub-workers were reset — it may need to "
+            (f"Hired onto existing Claude session {session_id} — it continues "
+             f"that conversation. " if session_id else
+             "Re-hired with its previous conversation restored (claude "
+             "--resume). Its own sub-workers were reset — it may need to "
              "respawn them. " if resume_id else "")
             + "Claude takes ~15s to start. If a trust prompt appears in the "
             "tmux window the user must attach and hit Enter once. Check "
