@@ -706,20 +706,110 @@ _QWATCH_SEEN: set = set()  # cheap in-process short-circuit over the markers
 QUESTION_POLL_SECONDS = 15
 
 
-def _claim_question_notification(qid: str) -> bool:
-    """Atomically claim the right to notify question `qid`. First claimer
+def _claim_once(kind: str, key: str) -> bool:
+    """Atomically claim the right to send one notification. First claimer
     across ALL processes wins; markers persist so restarts don't re-notify."""
-    d = state_dir() / "notified-questions"
-    qid = "".join(c if c.isalnum() or c in "-_." else "_" for c in qid)[:120]
+    d = state_dir() / f"notified-{kind}"
+    key = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)[:120]
     try:
         d.mkdir(parents=True, exist_ok=True)
-        with open(d / qid, "x") as fh:
+        with open(d / key, "x") as fh:
             fh.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         return True
     except FileExistsError:
         return False
     except OSError:
         return False  # cannot prove we're first — better silent than twice
+
+
+def _claim_question_notification(qid: str) -> bool:
+    return _claim_once("questions", qid)
+
+
+# ── direct-work notifications ───────────────────────────────────────────────
+# The user often attaches to an employee's pane and works there directly —
+# no dispatch, so the run watcher never sees it. Spawned employees' state
+# hooks record every turn regardless of who typed, so this checker turns
+# state-file transitions into Slack pings:
+#   busy → idle  (turn ≥ HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS, default 60,
+#                 and no dispatch run attached)  → "finished a direct turn"
+#   → awaiting_user (permission prompt etc., any time) → "needs your input"
+# Disable with HERMES_ORCH_DIRECT_NOTIFY=0. Invited (hook-less) employees
+# have no state file and are not covered.
+_PREV_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def _direct_notify_enabled() -> bool:
+    return os.environ.get("HERMES_ORCH_DIRECT_NOTIFY", "1").strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
+def _dispatch_recently_active(name: str, within_seconds: int = 180) -> bool:
+    """True when a dispatch run for `name` is running or JUST finished.
+
+    The run watcher owns notifications for dispatched work; without the
+    just-finished grace window a run that finalizes a moment before the
+    worker's Stop hook lands would make its turn look direct-typed and
+    get double-reported."""
+    import calendar
+    now = time.time()
+    for p in sorted(runs_dir().glob("*.json"), reverse=True)[:20]:
+        try:
+            m = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if m.get("orchestrator") != name:
+            continue
+        if m.get("status") == "running":
+            return True
+        fin = m.get("finished_at") or ""
+        try:
+            fin_epoch = calendar.timegm(
+                time.strptime(fin, "%Y-%m-%dT%H:%M:%SZ"))
+            if now - fin_epoch <= within_seconds:
+                return True
+        except (ValueError, OverflowError):
+            continue
+    return False
+
+
+def _check_direct_transitions() -> None:
+    if not _direct_notify_enabled():
+        return
+    min_secs = int(os.environ.get(
+        "HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS", "60") or 60)
+    for name in _registry_names():
+        f = state_dir() / "states" / f"{_safe_name(name)}.json"
+        try:
+            cur = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        st = cur.get("state") or ""
+        ts = int(cur.get("ts_epoch") or 0)
+        prev = _PREV_STATE.get(name)
+        _PREV_STATE[name] = {"state": st, "ts": ts}
+        if prev is None or prev["state"] == st:
+            continue  # first sighting or no transition — never notify on startup
+
+        if st == "idle" and prev["state"] in ("busy", "compacting"):
+            dur = max(0, ts - int(prev["ts"] or ts))
+            if dur >= min_secs and not _dispatch_recently_active(name) \
+                    and _claim_once("direct", f"{_safe_name(name)}-{ts}"):
+                _slack_notify(
+                    f":zzz: *{name}* finished a direct-work turn "
+                    f"({dur // 60}m {dur % 60}s) — typed in its pane, "
+                    f"no dispatch attached."
+                )
+        elif st == "awaiting_user":
+            # A permission prompt / question stalls the pane whether the work
+            # was dispatched or typed — always worth a ping.
+            detail = (cur.get("detail") or "").strip()
+            if _claim_once("direct", f"{_safe_name(name)}-await-{ts}"):
+                _slack_notify(
+                    f":keyboard: *{name}* is waiting for your input"
+                    + (f": {detail[:150]}" if detail else "")
+                    + f" — attach: tmux attach -t {name}"
+                )
 
 
 def _questions_watcher() -> None:
@@ -754,6 +844,10 @@ def _questions_watcher() -> None:
                     )
         except Exception:
             pass  # the watcher must survive anything
+        try:
+            _check_direct_transitions()
+        except Exception:
+            pass
         time.sleep(QUESTION_POLL_SECONDS)
 
 
