@@ -50,11 +50,11 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 - **`/to <employee> <task>`** — deterministic quick dispatch: no LLM
   interpretation, immediate state pre-check (busy/dead/awaiting refused with
   a clear message), fire-and-notify (completion arrives via the watcher).
-  In plain chat, starting a message with `@<employee>` steers the agent to
-  dispatch the rest to that employee. Both accept a **unique name prefix**
-  (`/to inf …` reaches `influencer-specialist`); ambiguous prefixes are
-  refused with the candidate list — `dispatch`/`status` tool actions resolve
-  prefixes the same way. `kill`/`invite`/`uninvite` require exact names.
+  Accepts a **unique name prefix** (`/to inf …` reaches
+  `influencer-specialist`); ambiguous prefixes are refused with the
+  candidate list — `dispatch`/`status` tool actions resolve prefixes the
+  same way. `kill`/`invite`/`uninvite` require exact names. (No `@`-mention
+  syntax — `@` is hermes's file-mention trigger and the two would collide.)
 
 ## Employee model
 

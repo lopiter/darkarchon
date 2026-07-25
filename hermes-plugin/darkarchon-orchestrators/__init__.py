@@ -30,14 +30,10 @@ ORCHESTRATOR_SCHEMA = {
         "FIRST USE: the fleet's tmux session name is not preset. If any action "
         "returns the 'No fleet session name' error, ask the USER what to name "
         "it (never invent one), then call action=set_team.\n\n"
-        "MENTIONS: when the user's message starts with '@<name-or-prefix>', "
-        "everything after the mention is a task for that employee — call "
-        "action=dispatch with name=<the mention, @ stripped> and the rest as "
-        "the task, verbatim. A unique prefix is fine ('@inf ...' reaches the "
-        "one employee starting with 'inf'); the tool resolves it and errors "
-        "with candidates when ambiguous — relay that error, don't guess. "
-        "Example: '@voc fix the login bug' → dispatch(name='voc', "
-        "task='fix the login bug'). Do not reinterpret or expand it.\n\n"
+        "NAMES: dispatch/status accept a unique name prefix ('inf' reaches "
+        "the one employee starting with 'inf'); the tool resolves it and "
+        "errors with candidates when ambiguous — relay that error, don't "
+        "guess.\n\n"
         "Actions:\n"
         "- set_team: set the fleet session name (once, from the user's answer).\n"
         "- spawn: hire an employee (name + cwd + optional brief = job charter "
@@ -238,7 +234,7 @@ Subcommands:
 Hiring/dispatching is done by the agent via the `orchestrator` tool —
 just ask in chat, e.g. "hire a backend-dev on ~/work/foo and have it ...".
 Quick dispatch without the model in the loop:  /to <employee> <task>
-(or start a chat message with @<employee> — the agent routes the rest to them.)
+(a unique name prefix works: /to inf ...)
 """
 
 
