@@ -169,8 +169,54 @@ def _recorded_session_id(name: str) -> str:
 SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]+$")
 
 
+def _latest_session_for_cwd(cwd: str) -> str:
+    """The id of the most recent Claude Code session started in `cwd`, or ''.
+
+    Claude stores sessions at ~/.claude/projects/<slug>/<id>.jsonl where the
+    slug is the cwd with '/' (and '.') turned into '-'. We try that dir first,
+    then fall back to scanning by the `cwd` field recorded inside each jsonl —
+    so an unexpected slug rule can't hide a session."""
+    target = str(Path(cwd).expanduser().resolve())
+    projects = Path.home() / ".claude" / "projects"
+    if not projects.is_dir():
+        return ""
+
+    def _newest(paths):
+        paths = [p for p in paths if p.is_file()]
+        if not paths:
+            return ""
+        return max(paths, key=lambda p: p.stat().st_mtime).stem
+
+    for slug in (target.replace("/", "-"),
+                 re.sub(r"[/.]", "-", target)):
+        d = projects / slug
+        if d.is_dir():
+            newest = _newest(list(d.glob("*.jsonl")))
+            if newest:
+                return newest
+
+    # fallback: newest-first global scan, matched on the recorded cwd
+    allj = sorted(projects.glob("*/*.jsonl"),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in allj[:300]:
+        try:
+            with open(p) as fh:
+                for _ in range(5):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    d = json.loads(line)
+                    if isinstance(d, dict) and d.get("cwd"):
+                        if str(Path(d["cwd"]).resolve()) == target:
+                            return p.stem
+                        break
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+    return ""
+
+
 def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
-          session_id: str = "") -> Dict[str, Any]:
+          session_id: str = "", continue_work: bool = False) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
@@ -183,6 +229,14 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
 
     resume_id = ""
     session_id = (session_id or "").strip()
+    if continue_work and not session_id:
+        # "just continue the existing work in this dir" — find it ourselves.
+        session_id = _latest_session_for_cwd(str(workdir))
+        if not session_id:
+            return _err(
+                f"no prior Claude session found for {workdir} — nothing to "
+                f"continue. Hire fresh, or open Claude there once first."
+            )
     if session_id:
         # Promote an arbitrary Claude conversation (e.g. the user's own past
         # session) into a NEW employee that continues it.
@@ -273,6 +327,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
         "tmux_session": name,
         "cwd": str(workdir),
         "resumed": bool(resume_id),
+        "continued_session": session_id or None,
         "note": (
             (f"Hired onto existing Claude session {session_id} — it continues "
              f"that conversation. " if session_id else

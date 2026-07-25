@@ -43,7 +43,11 @@ ORCHESTRATOR_SCHEMA = {
         "employee died (PC reboot, killed session) pass resume=true to "
         "re-hire it with its previous conversation restored — use this "
         "whenever the user asks to bring back / 다시 출근 a former employee "
-        "instead of hiring fresh.\n"
+        "instead of hiring fresh. To hire a NEW employee that simply "
+        "CONTINUES whatever Claude work already exists in a directory "
+        "(the user says '기존 작업 이어서' / 'continue the work in <dir>'), "
+        "pass continue_work=true with that cwd — the latest session there "
+        "is found and resumed automatically, no session id needed.\n"
         "- invite: adopt an ALREADY-RUNNING Claude session (target = "
         "'session:window') as an employee instead of spawning a new one. "
         "External employees can be dispatched to but never killed — use "
@@ -138,7 +142,18 @@ ORCHESTRATOR_SCHEMA = {
                     "(e.g. promoting the user's own past session — they get "
                     "it from /status inside that session). cwd must match "
                     "the session's original cwd, and the original session "
-                    "should be closed first. Do not combine with resume."
+                    "should be closed first. Do not combine with resume. "
+                    "Prefer continue_work when you don't have a specific id."
+                ),
+            },
+            "continue_work": {
+                "type": "boolean",
+                "description": (
+                    "spawn only: hire a NEW employee that continues the "
+                    "MOST RECENT Claude session in its cwd — the session id "
+                    "is discovered automatically (no /status needed). Use "
+                    "when the user just wants to pick up existing work in a "
+                    "directory. Close that session first if it is still open."
                 ),
             },
             "task": {
@@ -189,7 +204,8 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
                              args.get("brief") or "",
                              bool(args.get("resume")),
-                             args.get("session_id") or "")
+                             args.get("session_id") or "",
+                             bool(args.get("continue_work")))
         elif action == "invite":
             out = orch.invite(name, args.get("target") or "")
         elif action == "uninvite":
