@@ -316,8 +316,13 @@ def kill(name: str) -> Dict[str, Any]:
 def status(name: str) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
-    if not name or not NAME_RE.match(name):
+    if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
+    resolved, cands = _resolve_name(name)
+    if resolved is None and cands:
+        return _err(f"ambiguous employee '{name}' — matches: {', '.join(cands)}")
+    if resolved:
+        name = resolved
     script = darkarchon_home() / "lib" / "worker_state.py"
     proc = _run(["python3", str(script), name, "--json"], timeout=30)
     if proc.returncode != 0:
@@ -349,6 +354,21 @@ def _registry_names() -> List[str]:
         else:
             names.setdefault(sn, sn)
     return sorted(set(names.values()))
+
+
+def _resolve_name(query: str):
+    """Resolve an employee name, accepting a unique prefix ('inf' →
+    'influencer-specialist'). Returns (name, []) on success, (None,
+    candidates) when ambiguous, (None, []) when nothing matches."""
+    q = (query or "").strip().lstrip("@")
+    names = _registry_names()
+    if q in names:
+        return q, []
+    ql = q.lower()
+    matches = [n for n in names if n.lower().startswith(ql)] if ql else []
+    if len(matches) == 1:
+        return matches[0], []
+    return None, sorted(matches)
 
 
 def list_orchestrators() -> Dict[str, Any]:
@@ -521,8 +541,16 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
 def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
-    if not name or not NAME_RE.match(name):
+    if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
+    resolved, cands = _resolve_name(name)
+    if resolved is None:
+        if cands:
+            return _err(f"ambiguous employee '{name}' — matches: "
+                        f"{', '.join(cands)}. Be more specific.")
+        roster = ", ".join(_registry_names()) or "(no employees hired)"
+        return _err(f"unknown employee '{name}'. Roster: {roster}")
+    name = resolved
     if not task or not task.strip():
         return _err("task must be a non-empty string")
     wait_seconds = max(0, min(int(wait_seconds or 0), DISPATCH_WAIT_CAP_SECONDS))

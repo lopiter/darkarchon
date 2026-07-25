@@ -47,6 +47,14 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
   mailbox.
 - **`/orch` slash command** — fleet overview (`list`, `runs`, `questions`) +
   `team [<name>]`.
+- **`/to <employee> <task>`** — deterministic quick dispatch: no LLM
+  interpretation, immediate state pre-check (busy/dead/awaiting refused with
+  a clear message), fire-and-notify (completion arrives via the watcher).
+  In plain chat, starting a message with `@<employee>` steers the agent to
+  dispatch the rest to that employee. Both accept a **unique name prefix**
+  (`/to inf …` reaches `influencer-specialist`); ambiguous prefixes are
+  refused with the candidate list — `dispatch`/`status` tool actions resolve
+  prefixes the same way. `kill`/`invite`/`uninvite` require exact names.
 
 ## Employee model
 
