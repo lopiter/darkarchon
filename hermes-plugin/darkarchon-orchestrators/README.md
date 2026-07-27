@@ -47,6 +47,14 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
   mailbox.
 - **`/orch` slash command** — fleet overview (`list`, `runs`, `questions`) +
   `team [<name>]`.
+- **`/to <employee> <task>`** — deterministic quick dispatch: no LLM
+  interpretation, immediate state pre-check (busy/dead/awaiting refused with
+  a clear message), fire-and-notify (completion arrives via the watcher).
+  Accepts a **unique name prefix** (`/to inf …` reaches
+  `influencer-specialist`); ambiguous prefixes are refused with the
+  candidate list — `dispatch`/`status` tool actions resolve prefixes the
+  same way. `kill`/`invite`/`uninvite` require exact names. (No `@`-mention
+  syntax — `@` is hermes's file-mention trigger and the two would collide.)
 
 ## Employee model
 
@@ -142,6 +150,16 @@ atomic filesystem marker under `<state>/notified-questions/`. Slack
 delivery is best-effort and never blocks fleet operation; messages are
 prefixed with the fleet name so machines sharing a channel stay
 distinguishable.
+
+**Direct-work notifications**: when you attach to a spawned employee's pane
+and type there yourself (no dispatch), its state hooks still record every
+turn — the watcher turns those into Slack pings too: `:zzz:` when a turn
+lasting ≥ `HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS` (default 60) ends, and
+`:keyboard:` the moment the pane hits a permission prompt / awaiting-input
+state (dispatched or not). Turns belonging to a dispatch run are suppressed
+(the run watcher already reports those). Disable with
+`HERMES_ORCH_DIRECT_NOTIFY=0`. Invited (hook-less) employees are not
+covered — only spawned ones.
 
 ## How the namespacing works
 

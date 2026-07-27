@@ -152,7 +152,71 @@ def _err(message: str, **extra: Any) -> Dict[str, Any]:
 
 # ── spawn / kill ───────────────────────────────────────────────────────────
 
-def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
+def _safe_name(name: str) -> str:
+    """Same scheme as safe_name() in lib/_lib.sh / worker_state.py."""
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+
+
+def _recorded_session_id(name: str) -> str:
+    """Last Claude session id the state hook recorded for this employee."""
+    f = state_dir() / "states" / f"{_safe_name(name)}.json"
+    try:
+        return str(json.loads(f.read_text()).get("session_id") or "")
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
+SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]+$")
+
+
+def _latest_session_for_cwd(cwd: str) -> str:
+    """The id of the most recent Claude Code session started in `cwd`, or ''.
+
+    Claude stores sessions at ~/.claude/projects/<slug>/<id>.jsonl where the
+    slug is the cwd with '/' (and '.') turned into '-'. We try that dir first,
+    then fall back to scanning by the `cwd` field recorded inside each jsonl —
+    so an unexpected slug rule can't hide a session."""
+    target = str(Path(cwd).expanduser().resolve())
+    projects = Path.home() / ".claude" / "projects"
+    if not projects.is_dir():
+        return ""
+
+    def _newest(paths):
+        paths = [p for p in paths if p.is_file()]
+        if not paths:
+            return ""
+        return max(paths, key=lambda p: p.stat().st_mtime).stem
+
+    for slug in (target.replace("/", "-"),
+                 re.sub(r"[/.]", "-", target)):
+        d = projects / slug
+        if d.is_dir():
+            newest = _newest(list(d.glob("*.jsonl")))
+            if newest:
+                return newest
+
+    # fallback: newest-first global scan, matched on the recorded cwd
+    allj = sorted(projects.glob("*/*.jsonl"),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in allj[:300]:
+        try:
+            with open(p) as fh:
+                for _ in range(5):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    d = json.loads(line)
+                    if isinstance(d, dict) and d.get("cwd"):
+                        if str(Path(d["cwd"]).resolve()) == target:
+                            return p.stem
+                        break
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+    return ""
+
+
+def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
+          session_id: str = "", continue_work: bool = False) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
@@ -162,6 +226,63 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     workdir = Path(cwd).expanduser()
     if not workdir.is_dir():
         return _err(f"cwd not found: {workdir}")
+
+    resume_id = ""
+    session_id = (session_id or "").strip()
+    if continue_work and not session_id:
+        # "just continue the existing work in this dir" — find it ourselves.
+        session_id = _latest_session_for_cwd(str(workdir))
+        if not session_id:
+            return _err(
+                f"no prior Claude session found for {workdir} — nothing to "
+                f"continue. Hire fresh, or open Claude there once first."
+            )
+    if session_id:
+        # Promote an arbitrary Claude conversation (e.g. the user's own past
+        # session) into a NEW employee that continues it.
+        if not SESSION_ID_RE.match(session_id):
+            return _err(f"invalid session_id '{session_id}'")
+        if name in _registry_names():
+            return _err(
+                f"'{name}' is already registered — session_id is for hiring a "
+                f"NEW employee onto an existing conversation. Use resume=true "
+                f"to re-hire a dead employee, or pick another name."
+            )
+        # Claude transcripts live under ~/.claude/projects/<cwd-slug>/. Verify
+        # the id exists at all so a typo fails here instead of as a broken pane.
+        hits = list((Path.home() / ".claude" / "projects").glob(
+            f"*/{session_id}.jsonl"))
+        if not hits:
+            return _err(
+                f"no Claude session '{session_id}' found on this machine. "
+                f"Get the id via /status inside the session, and note the "
+                f"employee's cwd must match the session's original cwd."
+            )
+        resume_id = session_id
+    elif resume:
+        resume_id = _recorded_session_id(name)
+        if not resume_id:
+            return _err(
+                f"no recorded Claude session for '{name}' — it was never "
+                f"spawned with state hooks (or predates them). Spawn fresh "
+                f"instead (resume=false)."
+            )
+        # A rebooted/killed employee is usually still in the registry. Clear
+        # the dead registration (and its leftover session + sub-team registry,
+        # same as a lay-off) so the respawn isn't refused as a duplicate. A
+        # LIVE employee is never touched — resume only replaces the dead.
+        if name in _registry_names():
+            st = status(name)
+            if st.get("state") != "dead":
+                return _err(
+                    f"employee '{name}' is registered and {st.get('state')} — "
+                    f"resume only applies to a dead one. Kill it first if you "
+                    f"really want a restart."
+                )
+            cleared = kill(name)
+            if not cleared.get("ok"):
+                return _err("could not clear the dead registration",
+                            detail=cleared.get("error", ""))
 
     # The employee will own a tmux session named after it — refuse names that
     # would splice windows into an unrelated pre-existing session.
@@ -192,11 +313,11 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
     # after it. Its own workers (DARKARCHON_TEAM=<name>) land in that same
     # session, so one session == one employee + their whole sub-team.
     script = darkarchon_home() / "lib" / "spawn-worker.sh"
-    proc = _run(
-        [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name,
-         name, str(workdir), "orchestrator"],
-        timeout=30, extra_env=extra_env,
-    )
+    args = [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name]
+    if resume_id:
+        args += ["--resume-session", resume_id]
+    args += [name, str(workdir), "orchestrator"]
+    proc = _run(args, timeout=30, extra_env=extra_env)
     if proc.returncode != 0:
         return _err("spawn failed", detail=(proc.stderr or proc.stdout).strip())
     return {
@@ -205,10 +326,17 @@ def spawn(name: str, cwd: str, brief: str = "") -> Dict[str, Any]:
         "tmux_target": f"{name}:{name}",
         "tmux_session": name,
         "cwd": str(workdir),
+        "resumed": bool(resume_id),
+        "continued_session": session_id or None,
         "note": (
-            "Claude takes ~15s to start. If a trust prompt appears in the tmux "
-            "window the user must attach and hit Enter once. Check readiness "
-            "with action=status before the first dispatch."
+            (f"Hired onto existing Claude session {session_id} — it continues "
+             f"that conversation. " if session_id else
+             "Re-hired with its previous conversation restored (claude "
+             "--resume). Its own sub-workers were reset — it may need to "
+             "respawn them. " if resume_id else "")
+            + "Claude takes ~15s to start. If a trust prompt appears in the "
+            "tmux window the user must attach and hit Enter once. Check "
+            "readiness with action=status before the first dispatch."
         ),
     }
 
@@ -243,8 +371,13 @@ def kill(name: str) -> Dict[str, Any]:
 def status(name: str) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
-    if not name or not NAME_RE.match(name):
+    if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
+    resolved, cands = _resolve_name(name)
+    if resolved is None and cands:
+        return _err(f"ambiguous employee '{name}' — matches: {', '.join(cands)}")
+    if resolved:
+        name = resolved
     script = darkarchon_home() / "lib" / "worker_state.py"
     proc = _run(["python3", str(script), name, "--json"], timeout=30)
     if proc.returncode != 0:
@@ -276,6 +409,21 @@ def _registry_names() -> List[str]:
         else:
             names.setdefault(sn, sn)
     return sorted(set(names.values()))
+
+
+def _resolve_name(query: str):
+    """Resolve an employee name, accepting a unique prefix ('inf' →
+    'influencer-specialist'). Returns (name, []) on success, (None,
+    candidates) when ambiguous, (None, []) when nothing matches."""
+    q = (query or "").strip().lstrip("@")
+    names = _registry_names()
+    if q in names:
+        return q, []
+    ql = q.lower()
+    matches = [n for n in names if n.lower().startswith(ql)] if ql else []
+    if len(matches) == 1:
+        return matches[0], []
+    return None, sorted(matches)
 
 
 def list_orchestrators() -> Dict[str, Any]:
@@ -448,8 +596,16 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
 def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
-    if not name or not NAME_RE.match(name):
+    if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
+    resolved, cands = _resolve_name(name)
+    if resolved is None:
+        if cands:
+            return _err(f"ambiguous employee '{name}' — matches: "
+                        f"{', '.join(cands)}. Be more specific.")
+        roster = ", ".join(_registry_names()) or "(no employees hired)"
+        return _err(f"unknown employee '{name}'. Roster: {roster}")
+    name = resolved
     if not task or not task.strip():
         return _err("task must be a non-empty string")
     wait_seconds = max(0, min(int(wait_seconds or 0), DISPATCH_WAIT_CAP_SECONDS))
@@ -633,20 +789,110 @@ _QWATCH_SEEN: set = set()  # cheap in-process short-circuit over the markers
 QUESTION_POLL_SECONDS = 15
 
 
-def _claim_question_notification(qid: str) -> bool:
-    """Atomically claim the right to notify question `qid`. First claimer
+def _claim_once(kind: str, key: str) -> bool:
+    """Atomically claim the right to send one notification. First claimer
     across ALL processes wins; markers persist so restarts don't re-notify."""
-    d = state_dir() / "notified-questions"
-    qid = "".join(c if c.isalnum() or c in "-_." else "_" for c in qid)[:120]
+    d = state_dir() / f"notified-{kind}"
+    key = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)[:120]
     try:
         d.mkdir(parents=True, exist_ok=True)
-        with open(d / qid, "x") as fh:
+        with open(d / key, "x") as fh:
             fh.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         return True
     except FileExistsError:
         return False
     except OSError:
         return False  # cannot prove we're first — better silent than twice
+
+
+def _claim_question_notification(qid: str) -> bool:
+    return _claim_once("questions", qid)
+
+
+# ── direct-work notifications ───────────────────────────────────────────────
+# The user often attaches to an employee's pane and works there directly —
+# no dispatch, so the run watcher never sees it. Spawned employees' state
+# hooks record every turn regardless of who typed, so this checker turns
+# state-file transitions into Slack pings:
+#   busy → idle  (turn ≥ HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS, default 60,
+#                 and no dispatch run attached)  → "finished a direct turn"
+#   → awaiting_user (permission prompt etc., any time) → "needs your input"
+# Disable with HERMES_ORCH_DIRECT_NOTIFY=0. Invited (hook-less) employees
+# have no state file and are not covered.
+_PREV_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def _direct_notify_enabled() -> bool:
+    return os.environ.get("HERMES_ORCH_DIRECT_NOTIFY", "1").strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
+def _dispatch_recently_active(name: str, within_seconds: int = 180) -> bool:
+    """True when a dispatch run for `name` is running or JUST finished.
+
+    The run watcher owns notifications for dispatched work; without the
+    just-finished grace window a run that finalizes a moment before the
+    worker's Stop hook lands would make its turn look direct-typed and
+    get double-reported."""
+    import calendar
+    now = time.time()
+    for p in sorted(runs_dir().glob("*.json"), reverse=True)[:20]:
+        try:
+            m = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if m.get("orchestrator") != name:
+            continue
+        if m.get("status") == "running":
+            return True
+        fin = m.get("finished_at") or ""
+        try:
+            fin_epoch = calendar.timegm(
+                time.strptime(fin, "%Y-%m-%dT%H:%M:%SZ"))
+            if now - fin_epoch <= within_seconds:
+                return True
+        except (ValueError, OverflowError):
+            continue
+    return False
+
+
+def _check_direct_transitions() -> None:
+    if not _direct_notify_enabled():
+        return
+    min_secs = int(os.environ.get(
+        "HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS", "60") or 60)
+    for name in _registry_names():
+        f = state_dir() / "states" / f"{_safe_name(name)}.json"
+        try:
+            cur = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        st = cur.get("state") or ""
+        ts = int(cur.get("ts_epoch") or 0)
+        prev = _PREV_STATE.get(name)
+        _PREV_STATE[name] = {"state": st, "ts": ts}
+        if prev is None or prev["state"] == st:
+            continue  # first sighting or no transition — never notify on startup
+
+        if st == "idle" and prev["state"] in ("busy", "compacting"):
+            dur = max(0, ts - int(prev["ts"] or ts))
+            if dur >= min_secs and not _dispatch_recently_active(name) \
+                    and _claim_once("direct", f"{_safe_name(name)}-{ts}"):
+                _slack_notify(
+                    f":zzz: *{name}* finished a direct-work turn "
+                    f"({dur // 60}m {dur % 60}s) — typed in its pane, "
+                    f"no dispatch attached."
+                )
+        elif st == "awaiting_user":
+            # A permission prompt / question stalls the pane whether the work
+            # was dispatched or typed — always worth a ping.
+            detail = (cur.get("detail") or "").strip()
+            if _claim_once("direct", f"{_safe_name(name)}-await-{ts}"):
+                _slack_notify(
+                    f":keyboard: *{name}* is waiting for your input"
+                    + (f": {detail[:150]}" if detail else "")
+                    + f" — attach: tmux attach -t {name}"
+                )
 
 
 def _questions_watcher() -> None:
@@ -681,6 +927,10 @@ def _questions_watcher() -> None:
                     )
         except Exception:
             pass  # the watcher must survive anything
+        try:
+            _check_direct_transitions()
+        except Exception:
+            pass
         time.sleep(QUESTION_POLL_SECONDS)
 
 

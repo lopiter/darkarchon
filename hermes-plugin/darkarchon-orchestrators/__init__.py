@@ -30,12 +30,24 @@ ORCHESTRATOR_SCHEMA = {
         "FIRST USE: the fleet's tmux session name is not preset. If any action "
         "returns the 'No fleet session name' error, ask the USER what to name "
         "it (never invent one), then call action=set_team.\n\n"
+        "NAMES: dispatch/status accept a unique name prefix ('inf' reaches "
+        "the one employee starting with 'inf'); the tool resolves it and "
+        "errors with candidates when ambiguous — relay that error, don't "
+        "guess.\n\n"
         "Actions:\n"
         "- set_team: set the fleet session name (once, from the user's answer).\n"
         "- spawn: hire an employee (name + cwd + optional brief = job charter "
         "injected into its system prompt). Each employee gets its OWN tmux "
         "session named after it, where its sub-workers also live. Takes ~15s "
-        "to boot; check with status before the first dispatch.\n"
+        "to boot; check with status before the first dispatch. When an "
+        "employee died (PC reboot, killed session) pass resume=true to "
+        "re-hire it with its previous conversation restored — use this "
+        "whenever the user asks to bring back / 다시 출근 a former employee "
+        "instead of hiring fresh. To hire a NEW employee that simply "
+        "CONTINUES whatever Claude work already exists in a directory "
+        "(the user says '기존 작업 이어서' / 'continue the work in <dir>'), "
+        "pass continue_work=true with that cwd — the latest session there "
+        "is found and resumed automatically, no session id needed.\n"
         "- invite: adopt an ALREADY-RUNNING Claude session (target = "
         "'session:window') as an employee instead of spawning a new one. "
         "External employees can be dispatched to but never killed — use "
@@ -113,6 +125,37 @@ ORCHESTRATOR_SCHEMA = {
                     "prompt, so it shapes every future task."
                 ),
             },
+            "resume": {
+                "type": "boolean",
+                "description": (
+                    "spawn only: re-hire a DEAD employee with its previous "
+                    "Claude conversation restored (recorded session id + "
+                    "claude --resume). Refused if the employee is alive or "
+                    "has no recorded session. Its sub-workers are reset."
+                ),
+            },
+            "session_id": {
+                "type": "string",
+                "description": (
+                    "spawn only: hire a NEW employee that CONTINUES an "
+                    "existing Claude conversation with this session id "
+                    "(e.g. promoting the user's own past session — they get "
+                    "it from /status inside that session). cwd must match "
+                    "the session's original cwd, and the original session "
+                    "should be closed first. Do not combine with resume. "
+                    "Prefer continue_work when you don't have a specific id."
+                ),
+            },
+            "continue_work": {
+                "type": "boolean",
+                "description": (
+                    "spawn only: hire a NEW employee that continues the "
+                    "MOST RECENT Claude session in its cwd — the session id "
+                    "is discovered automatically (no /status needed). Use "
+                    "when the user just wants to pick up existing work in a "
+                    "directory. Close that session first if it is still open."
+                ),
+            },
             "task": {
                 "type": "string",
                 "description": (
@@ -159,7 +202,10 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
             out = orch.set_team(args.get("team") or "")
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
-                             args.get("brief") or "")
+                             args.get("brief") or "",
+                             bool(args.get("resume")),
+                             args.get("session_id") or "",
+                             bool(args.get("continue_work")))
         elif action == "invite":
             out = orch.invite(name, args.get("target") or "")
         elif action == "uninvite":
@@ -203,6 +249,8 @@ Subcommands:
 
 Hiring/dispatching is done by the agent via the `orchestrator` tool —
 just ask in chat, e.g. "hire a backend-dev on ~/work/foo and have it ...".
+Quick dispatch without the model in the loop:  /to <employee> <task>
+(a unique name prefix works: /to inf ...)
 """
 
 
@@ -258,8 +306,54 @@ def _handle_slash(raw_args: str) -> str:
     return f"Unknown subcommand: {cmd}\n\n{_HELP}"
 
 
+def _handle_to(raw_args: str) -> str:
+    """/to <employee> <task...> — deterministic dispatch, no LLM in the loop."""
+    parts = (raw_args or "").strip().split(None, 1)
+    if len(parts) < 2:
+        roster = ", ".join(o["name"] for o in
+                           (orch.list_orchestrators().get("orchestrators") or []))
+        return (f"Usage: /to <employee> <task>\n"
+                f"Employees: {roster or '(none — hire one first)'}")
+    query, task = parts[0], parts[1]
+    name, cands = orch._resolve_name(query)
+    if name is None:
+        if cands:
+            return (f"'{query.lstrip('@')}' is ambiguous — did you mean: "
+                    f"{', '.join(cands)}?")
+        roster = ", ".join(o["name"] for o in
+                           (orch.list_orchestrators().get("orchestrators") or []))
+        return (f"No employee matches '{query.lstrip('@')}'. "
+                f"Employees: {roster or '(none — hire one first)'}")
+
+    st = orch.status(name)
+    if not st.get("ok"):
+        return f"Error: {st.get('error')}"
+    state = st.get("state")
+    if state in ("dead", "unknown"):
+        return (f"'{name}' is {state} — revive it first "
+                f"(e.g. tell me to bring it back with resume).")
+    if state in ("busy", "compacting"):
+        return (f"'{name}' is {state} right now — one dispatch at a time. "
+                f"Try again when it finishes.")
+    if state == "awaiting_user":
+        return (f"'{name}' is waiting for input in its pane "
+                f"(tmux attach -t {name}) — answer that first.")
+
+    r = orch.dispatch(name, task, wait_seconds=0)
+    if not r.get("ok"):
+        return f"Error: {r.get('error')}{': ' + r.get('detail', '') if r.get('detail') else ''}"
+    return (f"→ {name}: dispatched (run {r.get('run_id')}). "
+            f"You'll be notified when it finishes.")
+
+
 def register(ctx) -> None:
     orch.set_context(ctx)  # enables completion push via ctx.inject_message
+    ctx.register_command(
+        "to",
+        handler=_handle_to,
+        description="Dispatch a task straight to an employee: /to <name> <task>",
+        args_hint="<employee> <task>",
+    )
     ctx.register_tool(
         name="orchestrator",
         toolset="orchestrator",

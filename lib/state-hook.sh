@@ -45,6 +45,11 @@ if not isinstance(detail, str):
     detail = ""
 detail = detail.replace("\n", " ").strip()[:200]
 event = payload.get("hook_event_name", "") if isinstance(payload, dict) else ""
+# The Claude session id, persisted so a dead worker can be respawned with
+# `claude --resume <id>` and keep its conversation (spawn-worker --resume-session).
+session_id = payload.get("session_id") or ""
+if not isinstance(session_id, str):
+    session_id = ""
 
 # Claude Code fires Notification BOTH for permission prompts ("Claude needs
 # your permission to ...") and for a plain 60s-idle nudge ("Claude is waiting
@@ -58,11 +63,20 @@ d = os.path.join(sd, "states")
 os.makedirs(d, exist_ok=True)
 f = os.path.join(d, safe + ".json")
 tmp = f + ".tmp." + str(os.getpid())
+record = {"state": state, "detail": detail, "event": event, "ts_epoch": int(time.time())}
+if session_id:
+    record["session_id"] = session_id
+else:
+    # Keep the last known id — SessionEnd and some events may omit it, and
+    # losing it would defeat resume right when it matters (after a shutdown).
+    try:
+        prev = json.load(open(f))
+        if isinstance(prev, dict) and prev.get("session_id"):
+            record["session_id"] = prev["session_id"]
+    except Exception:
+        pass
 with open(tmp, "w") as fh:
-    json.dump(
-        {"state": state, "detail": detail, "event": event, "ts_epoch": int(time.time())},
-        fh,
-    )
+    json.dump(record, fh)
 os.replace(tmp, f)  # atomic
 PY
 

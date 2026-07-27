@@ -8,7 +8,10 @@
 # in the send-keys string.
 #
 # Usage:
-#   start-worker-claude.sh <worker_name> <role> <team_root> <state_dir> [<context_dir>]
+#   start-worker-claude.sh <worker_name> <role> <team_root> <state_dir> [<context_dir>] [<resume_session_id>]
+#
+# A non-empty <resume_session_id> relaunches with `claude --resume <id>` so
+# the worker keeps its previous conversation (spawn-worker --resume-session).
 #
 # Layering order (later concatenations override earlier ones in the model's mind):
 #   1. <team_root>/prompts/all.md           — generic team contract (project-agnostic)
@@ -34,6 +37,7 @@ ROLE="$2"
 TEAM_ROOT="$3"
 STATE_DIR="$4"
 CONTEXT_DIR="${5:-}"
+RESUME_SESSION="${6:-}"
 
 export EE_WORKER_NAME="$WORKER_NAME"
 export EE_TEAM_ROOT="$TEAM_ROOT"
@@ -162,8 +166,15 @@ EOF
 fi
 
 # Exec into Claude. If user has a different binary in PATH, this still works.
+# --resume must precede the flag soup so a stray flag value can't swallow it.
 # shellcheck disable=SC2086
-if [ -z "$PROMPT" ]; then
+if [ -n "$RESUME_SESSION" ]; then
+    if [ -z "$PROMPT" ]; then
+        exec claude --resume "$RESUME_SESSION" $CLAUDE_FLAGS
+    else
+        exec claude --resume "$RESUME_SESSION" --append-system-prompt "$PROMPT" $CLAUDE_FLAGS
+    fi
+elif [ -z "$PROMPT" ]; then
     exec claude $CLAUDE_FLAGS
 else
     exec claude --append-system-prompt "$PROMPT" $CLAUDE_FLAGS

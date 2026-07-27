@@ -32,9 +32,15 @@ source "$HERE/_lib.sh"
 # stay in the current team. Lets a fleet manager give each orchestrator its
 # own dedicated session; the session is recorded as WORKER_<sn>_SESSION so
 # kill-worker.sh recognizes the window as ours despite the session mismatch.
+#
+# Optional --resume-session <claude-session-id> relaunches the worker with
+# `claude --resume <id>` so its previous conversation survives a reboot/kill.
+# The id is recorded by lib/state-hook.sh in $STATE_DIR/states/<safe>.json.
+# claude-kind workers only.
 KIND=claude
 ENV_PREFIX=""
 SESSION_OVERRIDE=""
+RESUME_SESSION=""
 add_env() {
     if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=. ]]; then
         echo "ERROR: --env expects KEY=VALUE, got '$1'" >&2
@@ -50,6 +56,8 @@ while [ $# -gt 0 ]; do
         --env=*)     add_env "${1#--env=}"; shift ;;
         --session)   SESSION_OVERRIDE="${2:-}"; shift 2 ;;
         --session=*) SESSION_OVERRIDE="${1#--session=}"; shift ;;
+        --resume-session)   RESUME_SESSION="${2:-}"; shift 2 ;;
+        --resume-session=*) RESUME_SESSION="${1#--resume-session=}"; shift ;;
         --)          shift; break ;;
         -*)          echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
         *)           break ;;
@@ -57,8 +65,19 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] <name> <cwd> [<role>]" >&2
     exit 1
+fi
+
+if [ -n "$RESUME_SESSION" ]; then
+    if [ "$KIND" != "claude" ]; then
+        echo "ERROR: --resume-session is only supported for claude workers" >&2
+        exit 1
+    fi
+    if [[ ! "$RESUME_SESSION" =~ ^[a-zA-Z0-9-]+$ ]]; then
+        echo "ERROR: invalid --resume-session '$RESUME_SESSION'" >&2
+        exit 1
+    fi
 fi
 NAME="$1"
 CWD="$2"
@@ -152,7 +171,7 @@ else
     LAUNCHER="$HERE/start-worker-claude.sh"
     if [ -x "$LAUNCHER" ]; then
         tmux send-keys -t "=$WIN_SESSION:$NAME" \
-            "${ENV_PREFIX}CLAUDE_FLAGS='$CLAUDE_FLAGS' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
+            "${ENV_PREFIX}CLAUDE_FLAGS='$CLAUDE_FLAGS' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR' '$RESUME_SESSION'" Enter
     else
         # Fallback to bare claude if wrapper missing (graceful degradation)
         tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}claude $CLAUDE_FLAGS" Enter
