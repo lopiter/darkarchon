@@ -82,8 +82,10 @@ function useArrowKeyNav(active: boolean): void {
   }, [active, hosts, selectedId, selectWorker]);
 }
 
-const isAwaiting = (s: Worker['state']) =>
-  s === 'awaiting_user:typed' || s === 'awaiting_user:question';
+// Prefix match, not a list: an unlisted awaiting_user:* variant would silently
+// read as "not awaiting" here, and unlike the Record maps below TypeScript
+// cannot catch that.
+const isAwaiting = (s: Worker['state']) => s.startsWith('awaiting_user:');
 
 export function DetailPanel() {
   const selected = useSelectedWorker();
@@ -164,11 +166,13 @@ function PanelHeader({
         : styles.statePill;
 
   const stateLabel =
-    worker.state === 'awaiting_user:typed' || worker.state === 'awaiting_user:question'
-      ? 'awaiting'
-      : worker.state === 'rate_limited'
-        ? 'rate limited'
-        : worker.state;
+    worker.state === 'awaiting_user:permission'
+      ? 'permission'
+      : isAwaiting(worker.state)
+        ? 'awaiting'
+        : worker.state === 'rate_limited'
+          ? 'rate limited'
+          : worker.state;
 
   const meta = [host, worker.role || team].filter(Boolean).join(' · ');
 

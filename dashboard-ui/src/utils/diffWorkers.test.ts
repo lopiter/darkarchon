@@ -53,6 +53,15 @@ describe('diffWorkers', () => {
     ]);
   });
 
+  it('busy → permission also emits awaiting', () => {
+    // The notification exists to say "a human is needed"; a permission prompt
+    // qualifies, so it must raise the same alert as the other awaiting states.
+    const prev = [host('m', 'T', [w('a', 'busy')])];
+    const next = [host('m', 'T', [w('a', 'awaiting_user:permission')])];
+    const result = diffWorkers(prev, next);
+    expect(result.map((t) => t.kind)).toEqual(['awaiting']);
+  });
+
   it('busy → typed emits awaiting (and nothing else)', () => {
     const prev = [host('m', 'T', [w('a', 'busy')])];
     const next = [host('m', 'T', [w('a', 'awaiting_user:typed')])];

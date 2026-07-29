@@ -39,6 +39,20 @@ describe('sortWorkersForTeam', () => {
     expect(sorted.map((x) => x.name)).toEqual(['c', 'b', 'a']);
   });
 
+  it('ranks a permission-blocked worker in the same top group', () => {
+    // It needs a human just as much as the other two; if it fell out of the top
+    // group it would sit below idle workers and go unnoticed.
+    const sorted = sortWorkersForTeam(
+      [
+        w('idle-one', 'idle'),
+        w('busy-one', 'busy'),
+        w('perm', 'awaiting_user:permission', '2026-05-23T15:00:00Z'),
+      ],
+      false
+    );
+    expect(sorted[0]!.name).toBe('perm');
+  });
+
   it('rate_limited above busy/compacting', () => {
     const sorted = sortWorkersForTeam(
       [w('a', 'busy'), w('b', 'rate_limited'), w('c', 'compacting')],
