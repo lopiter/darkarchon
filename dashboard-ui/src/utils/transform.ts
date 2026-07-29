@@ -131,6 +131,10 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
 
 function mapState(s: RawWorkerState): WorkerState {
   if (s === 'typed') return 'awaiting_user:typed';
+  // The backend reports what is blocking the worker; the domain namespaces all
+  // three under awaiting_user:* so sorting and notifications treat them alike.
+  if (s === 'awaiting_permission') return 'awaiting_user:permission';
+  if (s === 'awaiting_user') return 'awaiting_user:question';
   return s;
 }
 

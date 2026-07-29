@@ -377,7 +377,7 @@ def _handle_to(raw_args: str) -> str:
     if state in ("busy", "compacting"):
         return (f"'{name}' is {state} right now — one dispatch at a time. "
                 f"Try again when it finishes.")
-    if state == "awaiting_user":
+    if state in ("awaiting_user", "awaiting_permission"):
         return (f"'{name}' is waiting for input in its pane "
                 f"(tmux attach -t {name}) — answer that first.")
 

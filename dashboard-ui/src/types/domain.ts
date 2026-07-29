@@ -14,6 +14,7 @@ export type WorkerState =
   | 'compacting'
   | 'awaiting_user:typed'
   | 'awaiting_user:question'
+  | 'awaiting_user:permission'
   | 'rate_limited'
   | 'dead'
   | 'unknown';

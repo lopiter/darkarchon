@@ -44,7 +44,8 @@ interface Located {
 }
 
 function isAwaiting(s: WorkerState): boolean {
-  return s === 'awaiting_user:typed' || s === 'awaiting_user:question';
+  // Any awaiting_user:* variant needs a human, so all of them raise the alert.
+  return s.startsWith('awaiting_user:');
 }
 
 function indexWorkers(hosts: Host[]): Map<string, Located> {

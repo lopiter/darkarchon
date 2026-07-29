@@ -9,6 +9,8 @@ export type RawWorkerState =
   | 'idle'
   | 'busy'
   | 'typed' // → domain 'awaiting_user:typed'
+  | 'awaiting_permission' // blocked on a tool-permission prompt
+  | 'awaiting_user' // blocked on a question it asked
   | 'compacting'
   | 'rate_limited'
   | 'dead'

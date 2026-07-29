@@ -43,16 +43,24 @@ from lib.tmux_scanner import capture_pane  # noqa: E402
 from lib.worker_resolver import parse_registry_file  # noqa: E402
 
 # Canonical state vocabulary emitted by this resolver.
-#   dead          — worker gone (no session / heartbeat stale / pid dead)
-#   rate_limited  — API limit reached (scrape meta-state)
-#   error         — codex auth/stream failure (scrape meta-state)
-#   awaiting_user — permission prompt / explicit question (hook, rich detail)
-#   compacting    — /compact in progress
-#   busy          — actively processing a turn
-#   unsent        — user has typed but unsent input on the prompt line (scrape only)
-#   idle          — at an empty prompt, ready for dispatch
-#   unknown       — no recognizable signal
+#   dead                — worker gone (no session / heartbeat stale / pid dead /
+#                         session ended)
+#   rate_limited        — API limit reached (scrape meta-state)
+#   error               — codex auth/stream failure (scrape meta-state)
+#   awaiting_permission — blocked on a tool-permission prompt (PermissionRequest hook)
+#   awaiting_user       — blocked on an explicit question (Notification hook)
+#   compacting          — /compact in progress
+#   busy                — actively processing a turn
+#   unsent              — user has typed but unsent input on the prompt line (scrape only)
+#   idle                — at an empty prompt, ready for dispatch
+#   unknown             — no recognizable signal
 _SCRAPE_META = ("rate_limited", "error")
+
+# Hook states meaning the session is over. Reported as `dead`: the pane may still
+# exist (a worker that exited leaves a shell behind), and a bare shell scrapes as
+# `idle`, so without this an ended worker would look ready and swallow dispatches.
+# Scrape must not override these — a fresh SessionStart is what revives a worker.
+_HOOK_TERMINAL = ("ended",)
 
 
 def _sanitize(name: str) -> str:
@@ -115,6 +123,8 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
       - scrape meta-states (rate_limited, error) always honored: hooks can't
         emit them and they mean the worker can't progress.
       - no hook (invited/codex/legacy) → scrape verbatim.
+      - hook says the session ended → dead, and scrape cannot argue: the pane it
+        reads is a bare shell, which classifies as idle.
       - hook says busy but scrape sees idle/unsent → trust scrape. A missed Stop
         hook would otherwise pin the worker busy forever; scrape self-heals it.
       - hook says idle but scrape sees unsent → user is typing (hooks can't see
@@ -128,6 +138,9 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
     if hook is None:
         return {**scrape, "source": "scrape"}
     h, s = hook["state"], scrape["state"]
+    if h in _HOOK_TERMINAL:
+        return {"state": "dead", "detail": hook.get("detail", "") or "session ended",
+                "source": "hook"}
     if h == "busy" and s in ("idle", "unsent"):
         return {**scrape, "source": "scrape(hook-stale)"}
     if h == "idle" and s == "unsent":

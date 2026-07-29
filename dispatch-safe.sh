@@ -93,10 +93,15 @@ checked_dispatch() {
             [ -n "$detail" ] && echo "  detail: $detail" >&2
             echo "  The codex token appears expired or not logged in. Run 'codex login' and try again." >&2
             return 12 ;;
+        awaiting_permission)
+            echo "REFUSED: worker '$WORKER' ($TARGET) is blocked on a permission prompt." >&2
+            [ -n "$detail" ] && echo "  detail: $detail" >&2
+            echo "  Approve or deny it in the worker's pane, then try again." >&2
+            return 14 ;;
         awaiting_user)
             echo "REFUSED: worker '$WORKER' ($TARGET) is awaiting user input." >&2
             [ -n "$detail" ] && echo "  detail: $detail" >&2
-            echo "  The worker is waiting on user input (a permission prompt or question). Respond first, then try again." >&2
+            echo "  The worker asked a question and is waiting on an answer. Respond first, then try again." >&2
             return 14 ;;
         dead|unknown)
             echo "REFUSED: worker '$WORKER' ($TARGET) is $state." >&2

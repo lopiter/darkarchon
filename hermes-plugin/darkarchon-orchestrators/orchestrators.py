@@ -951,7 +951,7 @@ def _check_direct_transitions() -> None:
                     f"({dur // 60}m {dur % 60}s) — typed in its pane, "
                     f"no dispatch attached."
                 )
-        elif st == "awaiting_user":
+        elif st in ("awaiting_user", "awaiting_permission"):
             # A permission prompt / question stalls the pane whether the work
             # was dispatched or typed — always worth a ping.
             detail = (cur.get("detail") or "").strip()

@@ -274,6 +274,7 @@ NOSTART_CONFIRM="${TASK_NOSTART_CONFIRM:-10}" # idle-from-the-start polls ⇒ tr
 seen_busy=0
 idle_streak=0
 nudged=0
+blocked_notified=0
 
 while true; do
     # 1. Authoritative: result file present ⇒ done.
@@ -297,7 +298,16 @@ while true; do
             set_error "worker died mid-task (state=dead)" failed
             echo "WORKER_DEAD: $TASK_ID (target=$TARGET)" >&2
             exit 3 ;;
-        *)               idle_streak=0 ;;  # awaiting_user/rate_limited/error/unknown: occupied or blocked — wait under the cap
+        awaiting_permission|awaiting_user)
+            # Someone has to answer this before the task can move. Approval often
+            # arrives moments later, so keep waiting under the cap — but say so
+            # once, or the dispatch looks like it silently hung for an hour.
+            if [ "$blocked_notified" -eq 0 ]; then
+                echo "BLOCKED: $TASK_ID waiting on $STATE at $TARGET — respond in that pane" >&2
+                blocked_notified=1
+            fi
+            idle_streak=0 ;;
+        *)               idle_streak=0 ;;  # rate_limited/error/unsent/unknown: occupied or blocked — wait under the cap
     esac
 
     turn_end=0
