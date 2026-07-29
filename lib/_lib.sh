@@ -11,6 +11,21 @@ fi
 # shellcheck disable=SC1091
 source "$TEAM_ROOT/config.env"
 
+# A spawned worker inherits EE_STATE_DIR but NOT DARKARCHON_TEAM, and config.env
+# rebuilds STATE_DIR from DARKARCHON_TEAM unconditionally — so every lib script a
+# worker runs (mailbox.sh, ask.sh, and anything the MCP server delegates to)
+# resolved the *default* team's state dir and wrote there. Its messages and
+# questions landed somewhere its own orchestrator never looks.
+#
+# EE_STATE_DIR is stamped by the spawner and names the team this process actually
+# belongs to, so it wins. An explicit DARKARCHON_TEAM still takes precedence:
+# orchestrator-role workers are given one deliberately to namespace the team they
+# manage, and in that case both agree anyway.
+if [ -z "${DARKARCHON_TEAM:-}" ] && [ -n "${EE_STATE_DIR:-}" ]; then
+    STATE_DIR="$EE_STATE_DIR"
+    SESSION_NAME="$(basename "$EE_STATE_DIR")"
+fi
+
 # Export the resolved paths so python children (task_store.py, worker_state.py)
 # read the same STATE_DIR without each reconstructing it from DARKARCHON_TEAM.
 export STATE_DIR TOOL_PREFIX

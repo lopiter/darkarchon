@@ -39,7 +39,10 @@ sys.exit(0 if r.get('read_at') and r.get('created_at') else 1)" \
 "$MB" renotify b | grep -q "nothing outstanding" && ok "renotify is a no-op when empty" || no "renotify when empty"
 
 echo "MCP delegation:"
-EE_WORKER_NAME=a EE_STATE_DIR="$SD" python3 - "$DA" <<'PY' >/dev/null 2>&1
+# A real worker inherits EE_STATE_DIR but NOT DARKARCHON_TEAM, so unset it here.
+# With it set, the delegated scripts resolve the right state dir for the wrong
+# reason and this test cannot catch a regression in that resolution.
+env -u DARKARCHON_TEAM EE_WORKER_NAME=a EE_STATE_DIR="$SD" python3 - "$DA" <<'PY' >/dev/null 2>&1
 import importlib.util,sys
 spec=importlib.util.spec_from_file_location("m",sys.argv[1]+"/lib/mcp_server.py")
 m=importlib.util.module_from_spec(spec)

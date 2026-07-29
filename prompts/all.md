@@ -78,13 +78,19 @@ mcp__darkarchon__ask(question, context="")
 # in your mailbox. Use this by default.
 
 ```
-mcp__darkarchon__ask(question, context="", blocking=True, timeout_sec=1800)
+mcp__darkarchon__ask(question, context="", blocking=True, timeout_sec=90)
 ```
 
 # Waits and returns the answer. Use ONLY when no assumption is safe enough to
-# continue on — you are holding your turn open the whole time. On timeout the
-# question stays answerable: decide for yourself and state which assumption you
-# made.
+# continue on — you are holding your turn open the whole time.
+#
+# Keep the timeout short. A tool call that outlives the foreground window gets
+# moved to a background task, and your turn then ends WITHOUT the answer — the
+# exact thing blocking was supposed to prevent. If the decision may take a human
+# minutes, ask non-blocking and read the answer from your mailbox instead.
+#
+# On timeout the question stays answerable: decide for yourself and state which
+# assumption you made.
 
 **When to ask**:
 - A business decision is needed (which option to take).

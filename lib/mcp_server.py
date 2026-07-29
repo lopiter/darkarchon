@@ -42,7 +42,7 @@ def _gen_id() -> str:
 
 @mcp.tool()
 def ask(question: str, context: str = "", blocking: bool = False,
-        timeout_sec: int = 1800) -> str:
+        timeout_sec: int = 90) -> str:
     """File a question for the orchestrator (the human user) to answer.
 
     Use whenever a human decision is needed that the role prompt does not
@@ -57,7 +57,12 @@ def ask(question: str, context: str = "", blocking: bool = False,
         blocking: Wait for the answer and return it, instead of filing and
                   moving on. Use only when you genuinely cannot proceed on any
                   assumption — you hold your turn open for up to timeout_sec.
-        timeout_sec: How long to wait when blocking. On timeout the question
+        timeout_sec: How long to wait when blocking. Keep it short: a tool call
+                  that outlives the client's foreground window is moved to a
+                  background task, and your turn then ends without the answer —
+                  the exact outcome blocking was meant to avoid. For a decision
+                  a human may take minutes to make, ask non-blocking instead and
+                  read the answer from your mailbox. On timeout the question
                   stays pending and answerable; decide for yourself and say
                   which assumption you made.
 

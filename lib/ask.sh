@@ -30,7 +30,10 @@ source "$HERE/_lib.sh"
 
 FROM="${EE_WORKER_NAME:-}"
 BLOCKING=0
-TIMEOUT="${ASK_TIMEOUT_SEC:-1800}"
+# Short by design — see config.env: a blocking ask holds a tool call open, and a
+# call that outlives the client's foreground window is moved to a background
+# task, ending the worker's turn without the answer.
+TIMEOUT="${ASK_TIMEOUT_SEC:-90}"
 
 # parse args — flags may appear in any order before the body
 while [ "$#" -gt 0 ]; do
