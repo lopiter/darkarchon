@@ -186,16 +186,29 @@ class TaskStore:
                 vals,
             )
 
-    def set_attempt(self, task_id: str, attempt: int) -> None:
+    def set_attempt(self, task_id: str, attempt: int,
+                    result_file: str | None = None,
+                    done_marker: str | None = None) -> None:
         """Record a retry without touching `status`.
 
         A nudge issues a new attempt while the task legitimately stays
         `running`, and `update_status` would reject running → running. This
-        writes the one column instead of widening the state machine.
+        writes the affected columns instead of widening the state machine.
+
+        `result_file` and `done_marker` are attempt-scoped and change with it,
+        so they update together: leaving them pinned to attempt 1 would send
+        anyone reading the row to a path the poll loop abandoned.
         """
+        cols, vals = ['attempt'], [attempt]
+        if result_file is not None:
+            cols.append('result_file'); vals.append(result_file)
+        if done_marker is not None:
+            cols.append('done_marker'); vals.append(done_marker)
+        vals.append(task_id)
         with self._connect() as conn:
             cur = conn.execute(
-                "UPDATE tasks SET attempt=? WHERE id=?", (attempt, task_id)
+                f"UPDATE tasks SET {','.join(c + '=?' for c in cols)} WHERE id=?",
+                vals,
             )
             if cur.rowcount == 0:
                 raise KeyError(f"task '{task_id}' not found")
@@ -310,6 +323,8 @@ def _cli() -> None:
     psa = sub.add_parser('set-attempt', help='record a retry without a status transition')
     psa.add_argument('id')
     psa.add_argument('attempt', type=int)
+    psa.add_argument('--result-file', default=None)
+    psa.add_argument('--done-marker', default=None)
 
     pcf = sub.add_parser('consecutive-failures',
                          help='count settled dispatches since the last success')
@@ -352,7 +367,8 @@ def _cli() -> None:
         if ts:
             print(ts)
     elif args.cmd == 'set-attempt':
-        store.set_attempt(args.id, args.attempt)
+        store.set_attempt(args.id, args.attempt,
+                          result_file=args.result_file, done_marker=args.done_marker)
     elif args.cmd == 'consecutive-failures':
         print(store.consecutive_failures(args.worker, limit=args.limit))
 

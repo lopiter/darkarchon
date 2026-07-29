@@ -181,6 +181,28 @@ def test_set_attempt_leaves_status_alone(tmp_path):
     assert row["status"] == "running"  # running → running would be rejected
 
 
+def test_set_attempt_retargets_result_artifacts(tmp_path):
+    """result_file/done_marker are attempt-scoped; leaving them on attempt 1
+    would point a reader at the path the poll loop stopped watching."""
+    store = TaskStore(tmp_path / "tasks.db")
+    store.insert(_task("t1", result_file="/tmp/r-t1-a1.txt", done_marker="DONE-t1-a1"))
+    store.update_status("t1", "running")
+    store.set_attempt("t1", 2, result_file="/tmp/r-t1-a2.txt", done_marker="DONE-t1-a2")
+    row = store.get("t1")
+    assert row["attempt"] == 2
+    assert row["result_file"] == "/tmp/r-t1-a2.txt"
+    assert row["done_marker"] == "DONE-t1-a2"
+
+
+def test_set_attempt_without_paths_keeps_existing(tmp_path):
+    store = TaskStore(tmp_path / "tasks.db")
+    store.insert(_task("t1", result_file="/tmp/r.txt", done_marker="DONE-x"))
+    store.set_attempt("t1", 2)
+    row = store.get("t1")
+    assert row["result_file"] == "/tmp/r.txt"
+    assert row["done_marker"] == "DONE-x"
+
+
 def test_set_attempt_unknown_id(tmp_path):
     store = TaskStore(tmp_path / "tasks.db")
     with pytest.raises(KeyError):
