@@ -368,7 +368,6 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `dashboard.sh start \| stop \| status` | Start/stop hub + agent daemons (hub on `8765 + hash(team) % 100`) |
 | `dashboard-ui.sh start \| stop \| status` | Start/stop the Vite UI on `5173`; auto-syncs its proxy to the hub port. This is the screen you actually open in the browser |
 | `agent.sh start \| stop \| status` | Start/stop just the per-host agent |
-| `cleanup-serena.sh [--dry-run \| --all]` | Reap orphaned serena/lsp helper processes |
 
 **Worker-side tools** (called from inside a worker — via MCP when available, sh as fallback):
 
