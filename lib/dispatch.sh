@@ -2,23 +2,34 @@
 # Dispatch a task to a worker using file-based prompt + outbox (omc-style).
 #
 # Flow:
-#   1. Write full prompt to /tmp/ee/p-<id>.txt
-#   2. Send a SHORT (<200 char) trigger via tmux send-keys telling worker to
-#      Read the prompt file, work, and Write the answer to r-<id>.txt
-#   3. Poll the worker pane only for the literal "DONE-<id>" marker
-#   4. When marker appears, read the result file (no pane parsing)
-#   5. Persist task state in $STATE_DIR/tasks.db via lib/task_store.py
+#   1. Write the result contract + full prompt to <io_dir>/p-<id>.txt
+#   2. Send a SHORT (<200 char) trigger via tmux send-keys naming the prompt
+#      file, this attempt's result path, and this attempt's DONE marker
+#   3. Poll for the RESULT FILE — not the pane. Worker state (hook events >
+#      TUI scrape, via worker_state.py) only decides when a turn has ended
+#      without producing one, which earns a single nudge as attempt 2.
+#   4. Read the result, strip the marker line, persist and print it
+#   5. Task state lives in $STATE_DIR/tasks.db via lib/task_store.py
+#
+# Result paths and markers are attempt-scoped (r-<id>-a<N>.txt / DONE-<id>-a<N>)
+# so a nudged worker's first turn, finishing late, cannot have its answer read as
+# the retry's.
 #
 # Usage:
 #   dispatch.sh <worker> <prompt...>
 #   dispatch.sh homepage "what to analyze..."
 #   echo "long multi-line prompt..." | dispatch.sh website -
 #
+# Env:
+#   STRICT_RESULT_HEADER=1  fail a result whose first line isn't the marker
+#   DISPATCH_DEPS='["id"]'  record what this task waited on (set by dispatch-safe)
+#
 # Exit codes:
-#   0  success — answer printed to stdout, JSON status=completed
-#   1  unknown worker / bad args / target not found
-#   2  timeout — JSON status=timeout
-#   3  DONE marker observed but result file missing/empty (parse error)
+#   0  success — answer printed to stdout, status=completed
+#   1  unknown worker / bad args / target not found / trigger too long
+#   2  hard cap reached without a result — status=timeout
+#   3  worker died, or ended its turn twice with no result, or (strict mode)
+#      wrote a result whose header didn't match
 
 set -euo pipefail
 
