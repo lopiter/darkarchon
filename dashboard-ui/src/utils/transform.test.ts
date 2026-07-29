@@ -70,6 +70,19 @@ describe('transformRawStatus', () => {
     expect(states).toEqual(['awaiting_user:typed', 'busy', 'dead']);
   });
 
+  it('namespaces the backend blocked states under awaiting_user:*', () => {
+    // The resolver distinguishes a permission prompt from a question the worker
+    // asked; both mean a human has to act, so both land under awaiting_user:.
+    const hosts = transformRawStatus(
+      res([
+        rw({ state: 'awaiting_permission', name: 'a', target: ':1' }),
+        rw({ state: 'awaiting_user', name: 'b', target: ':2' }),
+      ])
+    );
+    const states = hosts[0]!.teams[0]!.workers.map((w) => w.state);
+    expect(states).toEqual(['awaiting_user:permission', 'awaiting_user:question']);
+  });
+
   it('maps focused through, defaulting to false when the agent omits it', () => {
     const [host] = transformRawStatus(
       res([

@@ -29,8 +29,10 @@ interface Props {
   exiting?: boolean;
 }
 
-const isAwaiting = (s: WorkerState) =>
-  s === 'awaiting_user:typed' || s === 'awaiting_user:question';
+// Every awaiting_user:* variant means a human has to act, so match on the
+// prefix rather than listing them — a new variant must not quietly stop
+// counting as "awaiting" here while the sort and notification paths include it.
+const isAwaiting = (s: WorkerState) => s.startsWith('awaiting_user:');
 
 const STATE_DOT: Record<WorkerState, string> = {
   idle: styles.dotIdle ?? '',
@@ -38,6 +40,7 @@ const STATE_DOT: Record<WorkerState, string> = {
   compacting: styles.dotBusy ?? '',
   'awaiting_user:typed': styles.dotAwaiting ?? '',
   'awaiting_user:question': styles.dotAwaiting ?? '',
+  'awaiting_user:permission': styles.dotAwaiting ?? '',
   rate_limited: styles.dotRate ?? '',
   dead: styles.dotDead ?? '',
   unknown: styles.dotDead ?? '',
@@ -49,6 +52,9 @@ const STATE_LABEL: Record<WorkerState, string> = {
   compacting: 'compacting',
   'awaiting_user:typed': 'awaiting',
   'awaiting_user:question': 'awaiting',
+  // Labelled apart from the others: this one is cleared by approving a prompt
+  // in the pane, not by answering a question the worker asked.
+  'awaiting_user:permission': 'permission',
   rate_limited: 'rate limited',
   dead: 'dead',
   unknown: 'unknown',
