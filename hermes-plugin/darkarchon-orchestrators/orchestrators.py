@@ -78,7 +78,7 @@ def manager_team() -> Optional[str]:
     """Fleet team name = tmux session for orchestrators + state dir key.
 
     Resolution: HERMES_ORCH_TEAM env (explicit override) > the name the user
-    chose at first use (persisted by set_team). No default — the user names
+    chose at first use (persisted by set_fleet). No default — the user names
     their fleet; callers get an actionable error until then.
     """
     env = os.environ.get("HERMES_ORCH_TEAM")
@@ -92,17 +92,35 @@ def manager_team() -> Optional[str]:
 
 
 _NO_TEAM = (
-    "No fleet name is set yet. STOP — do NOT call set_team in this turn, and "
+    "No fleet name is set yet. STOP — do NOT call set_fleet in this turn, and "
     "do NOT make up a name. End your turn by ASKING THE USER what to name the "
     "fleet (it namespaces state under ~/.darkarchon/<name>/). Call "
-    "action=set_team only in a later turn, with the name the user typed."
+    "action=set_fleet only in a later turn, with the name the user typed."
 )
 
 
-def set_team(team: str) -> Dict[str, Any]:
+def set_fleet(team: str, force: bool = False) -> Dict[str, Any]:
     team = (team or "").strip()
     if not team or not NAME_RE.match(team):
         return _err(f"invalid team name '{team}' (use [a-zA-Z0-9_-])")
+    current = manager_team()
+    if current and current != team and not force:
+        # Switching the fleet namespace hides every currently-registered
+        # employee from list/dispatch (they keep running in tmux, invisibly).
+        # Historically "hire X into team Y" got misread as set_team(Y) and
+        # orphaned whole rosters — refuse and steer to the group label.
+        names = _registry_names()
+        if names:
+            return _err(
+                f"fleet '{current}' still has {len(names)} employee(s) "
+                f"registered: {', '.join(names)}. Switching the fleet to "
+                f"'{team}' would make them invisible to list/dispatch (they "
+                f"keep running in tmux). If the user meant to hire into a "
+                f"TEAM/GROUP named '{team}', that is NOT this action — use "
+                f"spawn with team='{team}' (a label inside the current "
+                f"fleet). Only pass force=true if the user explicitly wants "
+                f"to abandon the current fleet."
+            )
     f = _team_state_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps({"team": team}))
@@ -110,6 +128,11 @@ def set_team(team: str) -> Dict[str, Any]:
             "note": f"Fleet name set. Registry and state live in "
                     f"~/.darkarchon/{team}/; each employee gets its own tmux "
                     f"session named after it."}
+
+
+# Deprecated alias — "team" used to mean the fleet namespace, which collided
+# with employee team labels (spawn's team=). Kept for old callers/tests.
+set_team = set_fleet
 
 
 def state_dir() -> Path:
@@ -121,6 +144,36 @@ def runs_dir() -> Path:
     d = state_dir() / "hermes-runs"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# ── employee groups ("X팀" labels inside ONE fleet namespace) ──────────────
+# The fleet namespace (manager_team) is global and singular; user-visible
+# "teams" of employees are just labels on registry entries. Plugin-owned
+# file — darkarchon core knows nothing about it.
+
+def _groups_file() -> Path:
+    return state_dir() / "employee-groups.json"
+
+
+def _load_groups() -> Dict[str, str]:
+    try:
+        d = json.loads(_groups_file().read_text())
+        return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _set_group(name: str, group: str) -> None:
+    g = _load_groups()
+    if group:
+        g[name] = group
+    else:
+        g.pop(name, None)
+    f = _groups_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(g, ensure_ascii=False, indent=1))
+    tmp.replace(f)
 
 
 def _env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -216,13 +269,17 @@ def _latest_session_for_cwd(cwd: str) -> str:
 
 
 def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
-          session_id: str = "", continue_work: bool = False) -> Dict[str, Any]:
+          session_id: str = "", continue_work: bool = False,
+          team: str = "") -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid orchestrator name '{name}' (use [a-zA-Z0-9_-])")
     if name == manager_team():
         return _err(f"name '{name}' collides with the manager team namespace")
+    team = (team or "").strip()
+    if team and not NAME_RE.match(team):
+        return _err(f"invalid team label '{team}' (use [a-zA-Z0-9_-])")
     workdir = Path(cwd).expanduser()
     if not workdir.is_dir():
         return _err(f"cwd not found: {workdir}")
@@ -320,9 +377,11 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
     proc = _run(args, timeout=30, extra_env=extra_env)
     if proc.returncode != 0:
         return _err("spawn failed", detail=(proc.stderr or proc.stdout).strip())
+    _set_group(name, team)
     return {
         "ok": True,
         "orchestrator": name,
+        "team": team or None,
         "tmux_target": f"{name}:{name}",
         "tmux_session": name,
         "cwd": str(workdir),
@@ -361,6 +420,7 @@ def kill(name: str) -> Dict[str, Any]:
         reg.unlink()
     except OSError:
         pass
+    _set_group(name, "")
     return {"ok": True, "orchestrator": name,
             "message": proc.stdout.strip(),
             "note": f"tmux session '{name}' (employee + its workers) removed."}
@@ -429,11 +489,13 @@ def _resolve_name(query: str):
 def list_orchestrators() -> Dict[str, Any]:
     if manager_team() is None:
         return _err(_NO_TEAM)
+    groups = _load_groups()
     fleet = []
     for name in _registry_names():
         st = status(name)
         fleet.append({
             "name": name,
+            "team": groups.get(name) or None,
             "state": st.get("state", "unknown"),
             "detail": st.get("detail", ""),
             "target": st.get("target", f"{name}:{name}"),
@@ -731,7 +793,7 @@ def runs(limit: int = 10) -> Dict[str, Any]:
 TARGET_RE = re.compile(r"^[a-zA-Z0-9_-]+:[a-zA-Z0-9_.-]+$")
 
 
-def invite(name: str, target: str) -> Dict[str, Any]:
+def invite(name: str, target: str, team: str = "") -> Dict[str, Any]:
     """Register an already-running Claude session (tmux session:window) as an
     employee, without spawning anything. Marked EXTERNAL — hermess can
     dispatch to it but never kills it; remove with uninvite."""
@@ -739,6 +801,9 @@ def invite(name: str, target: str) -> Dict[str, Any]:
         return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid employee name '{name}'")
+    team = (team or "").strip()
+    if team and not NAME_RE.match(team):
+        return _err(f"invalid team label '{team}' (use [a-zA-Z0-9_-])")
     target = (target or "").strip()
     if not TARGET_RE.match(target):
         return _err(f"invalid target '{target}' (expected session:window)")
@@ -746,9 +811,11 @@ def invite(name: str, target: str) -> Dict[str, Any]:
     proc = _run([str(script), name, target, "orchestrator"], timeout=30)
     if proc.returncode != 0:
         return _err("invite failed", detail=(proc.stderr or proc.stdout).strip())
+    _set_group(name, team)
     return {
         "ok": True,
         "orchestrator": name,
+        "team": team or None,
         "tmux_target": target,
         "external": True,
         "note": (
@@ -772,6 +839,7 @@ def uninvite(name: str) -> Dict[str, Any]:
     proc = _run([str(script), name], timeout=30)
     if proc.returncode != 0:
         return _err("uninvite failed", detail=(proc.stderr or proc.stdout).strip())
+    _set_group(name, "")
     return {"ok": True, "orchestrator": name, "message": proc.stdout.strip()}
 
 

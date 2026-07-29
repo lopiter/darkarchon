@@ -27,7 +27,7 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 ## What it registers
 
 - **`orchestrator` tool** (toolset `orchestrator`) — actions:
-  `set_team`, `spawn`, `invite`, `uninvite`, `dispatch`, `result`, `status`,
+  `set_fleet` (alias `set_team`), `spawn`, `invite`, `uninvite`, `dispatch`, `result`, `status`,
   `list`, `runs`, `questions`, `answer`, `interrupt`, `kill`.
   `invite` adopts an already-running Claude session (`session:window`) as an
   EXTERNAL employee: dispatchable, but state is scrape-detected (no hooks),
@@ -59,8 +59,16 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 ## Employee model
 
 - **The fleet session name is not preset.** On first use the agent asks the
-  user what to call it (`set_team`, persisted in
+  user what to call it (`set_fleet`, persisted in
   `~/.hermes/darkarchon-orchestrators.json`; `HERMES_ORCH_TEAM` env overrides).
+  There is exactly ONE active fleet namespace; `set_fleet` refuses to switch
+  away from a fleet that still has registered employees (they would keep
+  running in tmux but vanish from `list`/`dispatch`) unless `force=true`.
+- **Employee teams are labels, not namespaces.** "aaa를 bbb팀으로 채용" maps
+  to `spawn(name=aaa, team=bbb)` — a group label stored in the plugin-owned
+  `<state>/employee-groups.json`, shown grouped in `list`/`/orch`. `invite`
+  takes the same `team` label; `kill`/`uninvite` clear it. Labels never touch
+  darkarchon core or the fleet namespace.
 - **Each orchestrator is a long-lived employee.** `spawn` takes an optional
   `brief` — a job charter (who they are, what they own, standards) written to
   `~/.darkarchon/<team>/context/<name>/orchestrator.md` and layered into the

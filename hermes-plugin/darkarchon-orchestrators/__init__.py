@@ -29,15 +29,26 @@ ORCHESTRATOR_SCHEMA = {
         "whose charter fits over hiring a duplicate.\n\n"
         "FIRST USE: the fleet's tmux session name is not preset. If any action "
         "returns the 'No fleet session name' error, ask the USER what to name "
-        "it (never invent one), then call action=set_team.\n\n"
+        "it (never invent one), then call action=set_fleet.\n\n"
         "NAMES: dispatch/status accept a unique name prefix ('inf' reaches "
         "the one employee starting with 'inf'); the tool resolves it and "
         "errors with candidates when ambiguous — relay that error, don't "
         "guess.\n\n"
+        "TEAMS: employee teams ('X팀') are LABELS inside the one fleet — "
+        "when the user says 'aaa를 bbb팀으로 채용해줘', call spawn with "
+        "name=aaa, team=bbb. NEVER call set_fleet for that: set_fleet "
+        "switches the whole fleet namespace and hides every existing "
+        "employee (it is guarded and will refuse while employees are "
+        "registered).\n\n"
         "Actions:\n"
-        "- set_team: set the fleet session name (once, from the user's answer).\n"
+        "- set_fleet: set the fleet session name (once, from the user's "
+        "answer; fleet parameter). NOT for putting an employee in a team — "
+        "that is spawn's team parameter. Refuses to switch away from a fleet "
+        "that still has employees unless force=true (user explicitly wants "
+        "to abandon it). set_team is a deprecated alias.\n"
         "- spawn: hire an employee (name + cwd + optional brief = job charter "
-        "injected into its system prompt). Each employee gets its OWN tmux "
+        "injected into its system prompt + optional team = group label shown "
+        "in list). Each employee gets its OWN tmux "
         "session named after it, where its sub-workers also live. Takes ~15s "
         "to boot; check with status before the first dispatch. When an "
         "employee died (PC reboot, killed session) pass resume=true to "
@@ -82,16 +93,38 @@ ORCHESTRATOR_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["set_team", "spawn", "invite", "uninvite", "dispatch",
+                "enum": ["set_fleet", "set_team", "spawn", "invite",
+                         "uninvite", "dispatch",
                          "result", "status", "list", "runs", "questions",
                          "answer", "interrupt", "kill"],
                 "description": "Fleet operation to perform.",
             },
+            "fleet": {
+                "type": "string",
+                "description": (
+                    "set_fleet only: the fleet namespace name chosen by the "
+                    "user ([a-zA-Z0-9_-]). This is the whole fleet's "
+                    "identity, NOT an employee team — employee teams are "
+                    "spawn's team parameter."
+                ),
+            },
             "team": {
                 "type": "string",
                 "description": (
-                    "set_team only: fleet tmux session name, as chosen by the "
-                    "user ([a-zA-Z0-9_-])."
+                    "spawn/invite: the employee's team/group LABEL "
+                    "([a-zA-Z0-9_-]) — use this when the user hires someone "
+                    "'into team X' ('X팀으로'); it does NOT switch the fleet. "
+                    "(Legacy: for the deprecated set_team alias this carries "
+                    "the fleet name.)"
+                ),
+            },
+            "force": {
+                "type": "boolean",
+                "description": (
+                    "set_fleet only: confirm switching the fleet namespace "
+                    "away from one that still has registered employees "
+                    "(they become invisible to list/dispatch). Pass only "
+                    "when the user explicitly confirmed."
                 ),
             },
             "name": {
@@ -198,16 +231,19 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
     name = (args.get("name") or "").strip()
     run_id = (args.get("run_id") or "").strip()
     try:
-        if action == "set_team":
-            out = orch.set_team(args.get("team") or "")
+        if action in ("set_fleet", "set_team"):
+            out = orch.set_fleet(args.get("fleet") or args.get("team") or "",
+                                 bool(args.get("force")))
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
                              args.get("brief") or "",
                              bool(args.get("resume")),
                              args.get("session_id") or "",
-                             bool(args.get("continue_work")))
+                             bool(args.get("continue_work")),
+                             args.get("team") or "")
         elif action == "invite":
-            out = orch.invite(name, args.get("target") or "")
+            out = orch.invite(name, args.get("target") or "",
+                              args.get("team") or "")
         elif action == "uninvite":
             out = orch.uninvite(name)
         elif action == "dispatch":
@@ -244,7 +280,7 @@ Subcommands:
   list            Employees + live state (default)
   runs            Recent dispatch runs
   questions       Pending questions escalated by employees
-  team [<name>]   Show or set the fleet tmux session name
+  fleet [<name>]  Show or set the fleet tmux session name ("team" also works)
   help            This text
 
 Hiring/dispatching is done by the agent via the `orchestrator` tool —
@@ -259,13 +295,13 @@ def _handle_slash(raw_args: str) -> str:
     cmd = sub[0] if sub else "list"
     if cmd in {"help", "-h", "--help"}:
         return _HELP
-    if cmd == "team":
+    if cmd in ("fleet", "team"):
         if len(sub) > 1:
-            out = orch.set_team(sub[1])
+            out = orch.set_fleet(sub[1])
             return out.get("note") if out.get("ok") else f"Error: {out.get('error')}"
         team = orch.manager_team()
         return (f"Fleet session: '{team}'" if team
-                else "No fleet session name set yet. Use `/orch team <name>`.")
+                else "No fleet session name set yet. Use `/orch fleet <name>`.")
     if cmd == "questions":
         data = orch.questions()
         if not data.get("ok"):
@@ -295,13 +331,19 @@ def _handle_slash(raw_args: str) -> str:
         if not data.get("ok"):
             return f"Error: {data.get('error')}"
         if not data["orchestrators"]:
-            return (f"No employees in team '{data['team']}' yet. "
+            return (f"No employees in fleet '{data['team']}' yet. "
                     f"Ask me to hire one.")
-        lines = [f"Staff (team '{data['team']}'):"]
+        lines = [f"Staff (fleet '{data['team']}'):"]
+        by_team: Dict[str, list] = {}
         for o in data["orchestrators"]:
-            detail = f" — {o['detail']}" if o.get("detail") else ""
-            lines.append(f"  {o['name']:<20} {o['state']:<14} "
-                         f"({o['target']}){detail}")
+            by_team.setdefault(o.get("team") or "", []).append(o)
+        for label in sorted(by_team, key=lambda t: (t == "", t)):
+            if len(by_team) > 1 or label:
+                lines.append(f"  [{label or 'no team'}]")
+            for o in by_team[label]:
+                detail = f" — {o['detail']}" if o.get("detail") else ""
+                lines.append(f"    {o['name']:<20} {o['state']:<14} "
+                             f"({o['target']}){detail}")
         return "\n".join(lines)
     return f"Unknown subcommand: {cmd}\n\n{_HELP}"
 
