@@ -153,12 +153,13 @@ if [ -x "$STATE_HOOK" ]; then
     cat > "$HOOKS_CONFIG" <<EOF
 {
   "hooks": {
-    "SessionStart":     [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
-    "Stop":             [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
-    "Notification":     [{"hooks": [{"type": "command", "command": "$(_hook awaiting_user)"}]}],
-    "PreCompact":       [{"hooks": [{"type": "command", "command": "$(_hook compacting)"}]}],
-    "SessionEnd":       [{"hooks": [{"type": "command", "command": "$(_hook ended)"}]}]
+    "SessionStart":      [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
+    "UserPromptSubmit":  [{"hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
+    "Stop":              [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
+    "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "$(_hook awaiting_permission)"}]}],
+    "Notification":      [{"hooks": [{"type": "command", "command": "$(_hook awaiting_user)"}]}],
+    "PreCompact":        [{"hooks": [{"type": "command", "command": "$(_hook compacting)"}]}],
+    "SessionEnd":        [{"hooks": [{"type": "command", "command": "$(_hook ended)"}]}]
   }
 }
 EOF

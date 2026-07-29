@@ -16,7 +16,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,27 +40,9 @@ def _gen_id() -> str:
     return f"{ts}-{os.urandom(2).hex()}"
 
 
-def _sanitize_worker_name(name: str) -> str:
-    """Same scheme as `safe_name()` in lib/_lib.sh."""
-    return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
-
-
-def _lookup_target(worker_name: str) -> str | None:
-    """Find a worker's tmux target by parsing workers-runtime.env. Returns
-    None if the recipient isn't registered (the caller should warn)."""
-    rt = STATE_DIR / "workers-runtime.env"
-    if not rt.exists():
-        return None
-    var = f"WORKER_{_sanitize_worker_name(worker_name)}_TARGET="
-    for raw in rt.read_text().splitlines():
-        line = raw.strip()
-        if line.startswith(var):
-            return line[len(var):].strip("'").strip('"')
-    return None
-
-
 @mcp.tool()
-def ask(question: str, context: str = "") -> str:
+def ask(question: str, context: str = "", blocking: bool = False,
+        timeout_sec: int = 90) -> str:
     """File a question for the orchestrator (the human user) to answer.
 
     Use whenever a human decision is needed that the role prompt does not
@@ -73,25 +54,54 @@ def ask(question: str, context: str = "") -> str:
         question: The question itself. Be specific and include any choice
                   space relevant to deciding.
         context: Optional context about what you tried / why you're stuck.
+        blocking: Wait for the answer and return it, instead of filing and
+                  moving on. Use only when you genuinely cannot proceed on any
+                  assumption — you hold your turn open for up to timeout_sec.
+        timeout_sec: How long to wait when blocking. Keep it short: a tool call
+                  that outlives the client's foreground window is moved to a
+                  background task, and your turn then ends without the answer —
+                  the exact outcome blocking was meant to avoid. For a decision
+                  a human may take minutes to make, ask non-blocking instead and
+                  read the answer from your mailbox. On timeout the question
+                  stays pending and answerable; decide for yourself and say
+                  which assumption you made.
 
     Returns:
-        Question ID.
+        The question ID, or — when blocking — the answer text.
     """
-    qdir = STATE_DIR / "questions"
-    qdir.mkdir(parents=True, exist_ok=True)
-    qid = _gen_id()
     body = question
     if context:
         body = f"{question}\n\n---\nContext:\n{context}"
-    data = {
-        "question_id": qid,
-        "from_worker": WORKER_NAME,
-        "body": body,
-        "created_at": _now_iso(),
-        "status": "pending",
-    }
-    (qdir / f"{qid}.json").write_text(json.dumps(data))
-    return f"Question filed: {qid}"
+    args = ["--from", WORKER_NAME]
+    if blocking:
+        args += ["--blocking", "--timeout", str(timeout_sec)]
+    r = _run_lib("ask.sh", *args, body, timeout=timeout_sec + 30 if blocking else 30)
+    out = (r.stdout or "").strip()
+    if r.returncode == 0:
+        return out if blocking else f"Question filed: {out}"
+    # 2 = dismissed, 3 = timed out; both leave the worker to decide for itself.
+    return f"ask exited {r.returncode}: {(r.stderr or '').strip() or out}"
+
+
+def _run_lib(script: str, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run one of the lib/ shell helpers, which own the on-disk formats.
+
+    These tools used to reimplement the shell scripts in Python, and the copies
+    drifted: mailbox_send never pressed Enter after its tmux trigger, so the
+    notification sat unsent on the recipient's prompt line — which the state
+    detector then read as `unsent`, and dispatch-safe refuses to dispatch to a
+    worker in that state. Delegating keeps the message format, group addressing,
+    read_at stamping and the trigger protocol in exactly one place.
+    """
+    return subprocess.run(
+        [str(Path(__file__).resolve().parent / script), *args],
+        capture_output=True, text=True, timeout=timeout,
+        env={**os.environ, "EE_WORKER_NAME": WORKER_NAME},
+    )
+
+
+def _mailbox_sh(*args: str) -> subprocess.CompletedProcess:
+    return _run_lib("mailbox.sh", *args)
 
 
 @mcp.tool()
@@ -102,59 +112,35 @@ def mailbox_send(to: str, body: str) -> str:
     recipient is responsible for draining their mailbox (`mailbox_drain`).
 
     Args:
-        to: Recipient worker name. Must be registered in the team (or
-            this call will succeed at writing the file but the notification
-            will be skipped).
+        to: Recipient worker name, or a group address to reach several at once:
+            @all, @idle, @claude, @codex, @cwd:<dir>. You are never included in
+            your own group send.
         body: Message body.
 
     Returns:
-        Message ID + whether the tmux notification was sent.
+        The message id, or one `to=<worker> id=<id>` line per recipient for a
+        group send.
     """
-    mb_dir = STATE_DIR / "mailboxes"
-    mb_dir.mkdir(parents=True, exist_ok=True)
-    msg_id = f"{int(time.time() * 1e9)}-{os.urandom(2).hex()}"
-    data = {
-        "message_id": msg_id,
-        "from_worker": WORKER_NAME,
-        "to_worker": to,
-        "body": body,
-        "created_at": _now_iso(),
-    }
-    with (mb_dir / f"{to}.jsonl").open("a") as f:
-        f.write(json.dumps(data) + "\n")
-
-    notified = False
-    target = _lookup_target(to)
-    if target:
-        trigger = f"MAILBOX_NOTIFY from={WORKER_NAME} mailbox={to}"
-        try:
-            subprocess.run(
-                ["tmux", "send-keys", "-t", f"={target}", trigger],
-                check=False, capture_output=True, timeout=2,
-            )
-            notified = True
-        except Exception:
-            pass
-    return f"Sent {msg_id} (notified={notified})"
+    r = _mailbox_sh("send", to, "--from", WORKER_NAME, body)
+    if r.returncode != 0:
+        return f"Send failed (exit {r.returncode}): {(r.stderr or '').strip()}"
+    return r.stdout.strip() or "sent"
 
 
 @mcp.tool()
 def mailbox_drain() -> str:
     """Read and remove all pending messages in your own mailbox.
 
-    Destructive: drained messages are moved to <self>.drained.jsonl so
-    they aren't seen twice. Returns the raw JSONL content (one message
-    per line); empty string if there's nothing pending.
+    Destructive: drained messages are moved to <self>.drained.jsonl, stamped
+    with read_at so an undelivered message can be told from an unread one.
+    Returns the raw JSONL content (one message per line); empty string if
+    there's nothing pending.
     """
-    mailbox = STATE_DIR / "mailboxes" / f"{WORKER_NAME}.jsonl"
-    if not mailbox.exists() or mailbox.stat().st_size == 0:
-        return ""
-    drained = STATE_DIR / "mailboxes" / f"{WORKER_NAME}.drained.jsonl"
-    content = mailbox.read_text()
-    with drained.open("a") as f:
-        f.write(content)
-    mailbox.unlink()
-    return content
+    r = _mailbox_sh("read", WORKER_NAME)
+    if r.returncode != 0:
+        return f"Drain failed (exit {r.returncode}): {(r.stderr or '').strip()}"
+    out = r.stdout.strip()
+    return "" if out == "(empty)" else out
 
 
 @mcp.tool()

@@ -69,6 +69,52 @@ def test_hook_awaiting_user_is_authoritative():
     assert r["source"] == "hook"
 
 
+def test_hook_awaiting_permission_is_authoritative():
+    # PermissionRequest reports the tool prompt directly; scrape sees an idle-
+    # looking pane behind the modal and must not override it.
+    r = ws.synthesize(
+        hook={"state": "awaiting_permission", "detail": "Bash(rm -rf)"},
+        scrape={"state": "idle", "detail": ""},
+        is_dead=False,
+    )
+    assert r["state"] == "awaiting_permission"
+    assert r["detail"] == "Bash(rm -rf)"
+    assert r["source"] == "hook"
+
+
+def test_hook_ended_reports_dead():
+    # SessionEnd leaves a bare shell in the pane, which scrapes as idle — without
+    # this the worker would look ready and swallow every dispatch sent to it.
+    r = ws.synthesize(
+        hook={"state": "ended", "detail": ""},
+        scrape={"state": "idle", "detail": ""},
+        is_dead=False,
+    )
+    assert r["state"] == "dead"
+    assert r["source"] == "hook"
+
+
+def test_scrape_cannot_resurrect_an_ended_session():
+    r = ws.synthesize(
+        hook={"state": "ended", "detail": ""},
+        scrape={"state": "busy", "detail": "Whisking…"},
+        is_dead=False,
+    )
+    assert r["state"] == "dead"
+
+
+def test_rate_limited_still_outranks_ended():
+    # A scrape meta-state means the API refused us, which is the more actionable
+    # report; liveness/meta precedence must survive the new terminal handling.
+    r = ws.synthesize(
+        hook={"state": "ended", "detail": ""},
+        scrape={"state": "rate_limited", "detail": "5h: 100%"},
+        is_dead=False,
+    )
+    assert r["state"] == "rate_limited"
+    assert r["source"] == "scrape-meta"
+
+
 def test_hook_busy_and_scrape_busy_stays_busy():
     r = ws.synthesize(
         hook={"state": "busy", "detail": "turn"},

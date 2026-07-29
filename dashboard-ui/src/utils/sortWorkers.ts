@@ -39,7 +39,9 @@ function isVisible(w: Worker): boolean {
 }
 
 function priorityOf(s: WorkerState): 1 | 2 | 3 | 4 | 5 {
-  if (s === 'awaiting_user:typed' || s === 'awaiting_user:question') return 1;
+  // Every awaiting_user:* variant is "a human has to act" — rank them together
+  // so a new one can't silently drop out of the top group.
+  if (s.startsWith('awaiting_user:')) return 1;
   if (s === 'rate_limited') return 2;
   if (s === 'busy' || s === 'compacting') return 3;
   if (s === 'idle') return 4;

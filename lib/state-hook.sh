@@ -27,7 +27,13 @@ SD="${EE_STATE_DIR:-${STATE_DIR:-}}"
 [ -z "$SD" ] && exit 0
 
 # Capture the hook payload from stdin BEFORE the heredoc below claims stdin.
-PAYLOAD="$(cat 2>/dev/null || true)"
+#
+# `command -p cat` resolves from the shell's default PATH rather than the
+# inherited one. A worker launched with a stripped PATH would otherwise get
+# exit 127 and a broken pipe mid-write, and a repo that happens to ship its own
+# `cat` executable would capture the hook payload. Falls back to a bare `cat`
+# for the rare host where `command -p` finds nothing.
+PAYLOAD="$({ command -p cat 2>/dev/null || cat; } 2>/dev/null || true)"
 
 STATE_HOOK_PAYLOAD="$PAYLOAD" python3 - "$WORKER" "$STATE" "$SD" <<'PY' 2>/dev/null || true
 import json, os, sys, time
@@ -55,6 +61,11 @@ if not isinstance(session_id, str):
 # your permission to ...") and for a plain 60s-idle nudge ("Claude is waiting
 # for your input"). Only the former blocks dispatch; recording the idle nudge
 # as awaiting_user made every worker undispatchable after a minute of rest.
+#
+# The PermissionRequest hook now reports real permission prompts directly as
+# awaiting_permission, so this string match is only a fallback for the
+# Notification path — kept because it still fires on Claude Code builds or
+# settings merges where PermissionRequest does not reach us.
 if state == "awaiting_user" and "waiting for your input" in detail.lower():
     state = "idle"
 

@@ -3,14 +3,21 @@
 Replaces the per-task JSON-file scheme. Single DB file at
 `$STATE_DIR/tasks.db`. Sh-callable via:
     python3 lib/task_store.py insert <json_file>
-    python3 lib/task_store.py update-status <id> <new_status> [--result …] [--error …]
+    python3 lib/task_store.py update-status <id> <new_status> [--result …] [--error …] [--attempt N]
     python3 lib/task_store.py list [--status …] [--worker …] [--format json|table]
     python3 lib/task_store.py get <id>
+    python3 lib/task_store.py set-attempt <id> <n>
+    python3 lib/task_store.py consecutive-failures <worker>
     python3 lib/task_store.py prune <days>
 
 State machine: pending → running → {completed,failed,timeout,cancelled}.
 Terminal states have no outgoing transitions; an attempted transition raises
 ValueError. dispatch.sh + tasks.sh shell out to this module.
+
+Schema changes must be additive: dashboard.py serializes whole rows to
+`GET /api/task/<id>` and older agent hosts keep inserting the columns they know
+about. New columns go in both SCHEMA and MIGRATIONS so fresh and pre-existing
+DBs converge.
 """
 
 from __future__ import annotations
@@ -48,18 +55,35 @@ CREATE TABLE IF NOT EXISTS tasks (
     started_at TEXT,
     completed_at TEXT,
     result TEXT,
-    error TEXT
+    error TEXT,
+    attempt INTEGER DEFAULT 1,
+    deps TEXT DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_worker ON tasks(worker);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_dispatched_at ON tasks(dispatched_at DESC);
 """
 
+# Columns added after the original 14-column schema shipped. `_migrate()` adds
+# any that a pre-existing tasks.db lacks. ALTER TABLE only accepts constant
+# defaults, so keep these literal.
+MIGRATIONS = [
+    ('attempt', "INTEGER DEFAULT 1"),
+    ('deps', "TEXT DEFAULT '[]'"),
+]
+
 FIELDS = [
     'id', 'worker', 'tmux_target', 'prompt', 'prompt_file', 'result_file',
     'done_marker', 'status', 'dispatched_at', 'dispatched_by',
     'started_at', 'completed_at', 'result', 'error',
+    'attempt', 'deps',
 ]
+
+# Statuses that a dispatch actually settled on. `consecutive_failures` walks
+# these newest-first; `pending`/`running` are excluded so an in-flight task
+# neither counts as a failure nor resets the streak, and `cancelled` is excluded
+# because an operator abort is not the worker's fault.
+_SETTLED_STATUSES = ('completed', 'failed', 'timeout')
 
 
 def _now_iso() -> str:
@@ -72,19 +96,62 @@ class TaskStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns a pre-existing tasks.db predates.
+
+        `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a DB
+        created before MIGRATIONS existed would never gain the new columns and
+        every INSERT (which names all of FIELDS) would fail. Fresh DBs get them
+        from SCHEMA and skip the ALTER path entirely.
+
+        Two dispatches can open the store at the same moment and both observe a
+        column as missing — PRAGMA-then-ALTER is not atomic and WAL only
+        serializes the write. The loser hits "duplicate column name", which is
+        exactly the state we wanted, so swallow it and let anything else raise.
+        """
+        have = {r['name'] for r in conn.execute("PRAGMA table_info(tasks)")}
+        for name, decl in MIGRATIONS:
+            if name in have:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as exc:
+                if 'duplicate column' not in str(exc).lower():
+                    raise
 
     def _connect(self) -> sqlite3.Connection:
         # WAL + busy_timeout so concurrent dispatches don't lock each other out.
+        #
+        # busy_timeout goes first so it governs everything after it. The WAL
+        # switch is then best-effort: converting a not-yet-WAL file needs
+        # exclusive access, and SQLite returns SQLITE_BUSY immediately for that
+        # — busy_timeout does not apply — so two dispatches opening a fresh
+        # tasks.db at the same instant would crash one of them. Journal mode is
+        # a concurrency optimization, not a correctness requirement: if we lose
+        # the race, carry on in the default mode. Whoever won leaves the file in
+        # WAL, and from then on this pragma is a no-op for everyone.
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass
         return conn
 
     def insert(self, task: dict) -> None:
         row = {f: task.get(f) for f in FIELDS}
         if not row['status']:
             row['status'] = 'pending'
+        # Naming every column in the INSERT bypasses the schema DEFAULTs, so a
+        # caller that omits these would store NULL and break `attempt + 1`.
+        if row['attempt'] is None:
+            row['attempt'] = 1
+        if row['deps'] is None:
+            row['deps'] = '[]'
         with self._connect() as conn:
             conn.execute(
                 f"INSERT OR REPLACE INTO tasks ({','.join(FIELDS)}) "
@@ -119,6 +186,33 @@ class TaskStore:
                 vals,
             )
 
+    def set_attempt(self, task_id: str, attempt: int,
+                    result_file: str | None = None,
+                    done_marker: str | None = None) -> None:
+        """Record a retry without touching `status`.
+
+        A nudge issues a new attempt while the task legitimately stays
+        `running`, and `update_status` would reject running → running. This
+        writes the affected columns instead of widening the state machine.
+
+        `result_file` and `done_marker` are attempt-scoped and change with it,
+        so they update together: leaving them pinned to attempt 1 would send
+        anyone reading the row to a path the poll loop abandoned.
+        """
+        cols, vals = ['attempt'], [attempt]
+        if result_file is not None:
+            cols.append('result_file'); vals.append(result_file)
+        if done_marker is not None:
+            cols.append('done_marker'); vals.append(done_marker)
+        vals.append(task_id)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE tasks SET {','.join(c + '=?' for c in cols)} WHERE id=?",
+                vals,
+            )
+            if cur.rowcount == 0:
+                raise KeyError(f"task '{task_id}' not found")
+
     def get(self, task_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -138,6 +232,36 @@ class TaskStore:
         params.append(limit)
         with self._connect() as conn:
             return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def consecutive_failures(self, worker: str, limit: int = 50) -> int:
+        """Count settled dispatches since this worker's last success.
+
+        Feeds dispatch-safe.sh's circuit breaker. Derived from the rows rather
+        than a stored counter so a success resets the streak for free and a
+        pruned history degrades gracefully.
+
+        Refusals (dispatch-safe exit 10-17) never insert a row, so they cannot
+        burn the breaker budget — only dispatches that actually reached a worker
+        count. Retries within one dispatch are attempts on a single row, so a
+        task that succeeded after a nudge contributes one `completed`, not two.
+
+        `dispatched_at` has one-second resolution, so ties are broken by `id`
+        (same-second ids share the timestamp prefix and differ only in the
+        random suffix — arbitrary but stable, which is all ordering needs).
+        """
+        placeholders = ','.join('?' * len(_SETTLED_STATUSES))
+        sql = (
+            f"SELECT status FROM tasks WHERE worker=? AND status IN ({placeholders}) "
+            "ORDER BY dispatched_at DESC, id DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, (worker, *_SETTLED_STATUSES, limit)).fetchall()
+        streak = 0
+        for r in rows:
+            if r['status'] == 'completed':
+                break
+            streak += 1
+        return streak
 
     def last_activity_at(self, worker: str) -> str | None:
         with self._connect() as conn:
@@ -177,6 +301,8 @@ def _cli() -> None:
     pu.add_argument('status')
     pu.add_argument('--result', default=None)
     pu.add_argument('--error', default=None)
+    pu.add_argument('--attempt', type=int, default=None,
+                    help='record which dispatch attempt this row is on')
 
     pg = sub.add_parser('get', help='print one task as json')
     pg.add_argument('id')
@@ -194,6 +320,17 @@ def _cli() -> None:
     pla = sub.add_parser('last-activity', help='print latest activity timestamp for a worker')
     pla.add_argument('worker')
 
+    psa = sub.add_parser('set-attempt', help='record a retry without a status transition')
+    psa.add_argument('id')
+    psa.add_argument('attempt', type=int)
+    psa.add_argument('--result-file', default=None)
+    psa.add_argument('--done-marker', default=None)
+
+    pcf = sub.add_parser('consecutive-failures',
+                         help='count settled dispatches since the last success')
+    pcf.add_argument('worker')
+    pcf.add_argument('--limit', type=int, default=50)
+
     args = p.parse_args()
     store = TaskStore(args.db or _resolve_db_path())
 
@@ -206,6 +343,8 @@ def _cli() -> None:
             extra['result'] = args.result
         if args.error is not None:
             extra['error'] = args.error
+        if args.attempt is not None:
+            extra['attempt'] = args.attempt
         store.update_status(args.id, args.status, **extra)
     elif args.cmd == 'get':
         print(json.dumps(store.get(args.id) or {}, indent=2))
@@ -227,6 +366,11 @@ def _cli() -> None:
         ts = store.last_activity_at(args.worker)
         if ts:
             print(ts)
+    elif args.cmd == 'set-attempt':
+        store.set_attempt(args.id, args.attempt,
+                          result_file=args.result_file, done_marker=args.done_marker)
+    elif args.cmd == 'consecutive-failures':
+        print(store.consecutive_failures(args.worker, limit=args.limit))
 
 
 if __name__ == '__main__':

@@ -12,39 +12,85 @@ and preserved across `/compact`.
 
 ## Dispatch Protocol (How You Receive Work)
 
-When work arrives, a trigger line appears in your tmux input:
+Work arrives as one line in your tmux input. It names three things: where the
+prompt is, where the answer goes, and the marker that identifies this attempt.
+
 ```
-Read /tmp/ee/p-<id>.txt then Write final answer to /tmp/ee/r-<id>.txt then output DONE-<id>
+Read /tmp/darkarchon-<uid>/p-<id>.txt then Write final answer to /tmp/darkarchon-<uid>/r-<id>-a<N>.txt then output DONE-<id>-a<N>
 ```
 
-Steps:
-1. Read `/tmp/ee/p-<id>.txt` — that file holds the actual prompt body.
+1. Read the prompt file. It holds the real task; the trigger line is only a pointer.
 2. Do the work.
-3. Write your result to `/tmp/ee/r-<id>.txt` (markdown OK, no length cap).
-4. **End your final text output with the literal line `DONE-<id>`** so the orchestrator detects completion.
+3. Write the answer to the result file named in that line — and nowhere else.
 
-If you forget the DONE marker, the orchestrator times out and treats the dispatch as failed.
+   # The FIRST LINE of the result file must be the DONE marker from the trigger,
+   # with your answer starting on the second line. The marker says which attempt
+   # wrote the file. It is stripped before the orchestrator sees your answer.
+   #
+   # Use the marker from the message you are answering right now. If you were
+   # nudged, the paths and the marker changed — an answer written to the old
+   # path is read by no one.
+   ```
+   DONE-20260729-183000-ab12-a1
+   The migration touched three files; see below.
+   ```
 
-## Peer Messaging (Optional)
+4. Writing that file IS the completion signal. Printing the marker in your chat
+   output is harmless but does nothing on its own.
 
-Use the `mcp__darkarchon__mailbox_send(to, body)` tool to send a message
-to another worker on the same team. Drain your own queue with
-`mcp__darkarchon__mailbox_drain()` (destructive — drained messages are
-archived to `<self>.drained.jsonl`).
+If your turn ends without that file, you get one nudge with a fresh marker and
+result path. Ending a second time with nothing written fails the dispatch.
 
-A `MAILBOX_NOTIFY` trigger appearing in your tmux input means new mail
-has arrived — drain it.
+## Reporting Failure
 
-(Legacy fallback: `$EE_TEAM_ROOT/lib/mailbox.sh` still works the same way.)
+If you could not do the work, say so as the answer, plainly and in the first
+sentence — then write the file anyway. A dispatch that fails loudly can be
+retried; one that quietly returns something that reads like success cannot.
+Never end a turn silently because the task turned out to be impossible.
+
+## Peer Messaging
+
+```
+mcp__darkarchon__mailbox_send(to, body)
+```
+
+`to` is another worker's name, or a group: `@all`, `@idle`, `@claude`,
+`@codex`, `@cwd:<dir>`. You are never included in your own group send.
+
+```
+mcp__darkarchon__mailbox_drain()
+```
+
+# Drain when a MAILBOX_NOTIFY trigger appears in your input, and act on what you
+# find — draining is what marks the messages read. Leaving them queued makes the
+# sender's tooling report the message as never delivered.
+# Draining is destructive: messages move to <self>.drained.jsonl.
+
+(Legacy path, same files: `$EE_TEAM_ROOT/lib/mailbox.sh send|read`.)
 
 ## Asking the User a Question
 
-When you are blocked on a decision only a human can make, do NOT guess.
-Use the `mcp__darkarchon__ask(question, context="")` tool. The question
-lands in `$EE_STATE_DIR/questions/` and the orchestrator surfaces it on
-the next sync cycle; the answer comes back to your mailbox.
+```
+mcp__darkarchon__ask(question, context="")
+```
 
-(Legacy fallback: `$EE_TEAM_ROOT/lib/ask.sh "your question"` still works.)
+# Files the question and returns immediately. Keep working; the answer arrives
+# in your mailbox. Use this by default.
+
+```
+mcp__darkarchon__ask(question, context="", blocking=True, timeout_sec=90)
+```
+
+# Waits and returns the answer. Use ONLY when no assumption is safe enough to
+# continue on — you are holding your turn open the whole time.
+#
+# Keep the timeout short. A tool call that outlives the foreground window gets
+# moved to a background task, and your turn then ends WITHOUT the answer — the
+# exact thing blocking was supposed to prevent. If the decision may take a human
+# minutes, ask non-blocking and read the answer from your mailbox instead.
+#
+# On timeout the question stays answerable: decide for yourself and state which
+# assumption you made.
 
 **When to ask**:
 - A business decision is needed (which option to take).
@@ -54,6 +100,8 @@ the next sync cycle; the answer comes back to your mailbox.
 **When NOT to ask**:
 - Facts you can find by reading code/docs — investigate yourself.
 - Inherently estimated values — tag as `[estimate]` and proceed.
+
+(Legacy path, same files: `$EE_TEAM_ROOT/lib/ask.sh [--blocking] "your question"`.)
 
 ## Reporting Conventions
 

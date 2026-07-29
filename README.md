@@ -239,21 +239,21 @@ sequenceDiagram
     User->>dispatch: dispatch-safe.sh backend 'add /health'
     dispatch->>tmux: check active marker (busy?)
     dispatch->>disp: delegate (idle)
-    disp->>fs: /tmp/ee/p-<id>.txt = prompt
-    disp->>store: insert row (pending)
+    disp->>fs: /tmp/darkarchon-<uid>/p-<id>.txt = contract + prompt
+    disp->>store: insert row (pending, attempt=1)
     store->>fs: tasks.db append
-    disp->>tmux: send-keys "Read p-<id> Write r-<id> output DONE-<id>"
+    disp->>tmux: send-keys "Read p-<id> Write r-<id>-a1 output DONE-<id>-a1"
     disp->>store: update-status → running
 
-    loop poll for DONE marker (every 3s)
-        disp->>tmux: capture pane content
+    loop poll every 3s
+        disp->>fs: result file present?
+        disp->>store: worker state (hook > scrape)
     end
 
-    claude->>fs: Read /tmp/ee/p-<id>.txt
+    claude->>fs: Read /tmp/darkarchon-<uid>/p-<id>.txt
     claude->>claude: do work
-    claude->>fs: Write /tmp/ee/r-<id>.txt
-    claude->>tmux: print "DONE-<id>"
-    disp->>fs: read r-<id>.txt
+    claude->>fs: Write r-<id>-a1.txt (first line = DONE-<id>-a1)
+    disp->>fs: read r-<id>-a1.txt, strip marker line
     disp->>store: update-status → completed (+ result)
     disp->>User: stdout = result
 ```
@@ -356,28 +356,47 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `lib/spawn-worker.sh [--kind claude\|codex] <name> <cwd> [role]` | Create a new tmux window and start a Claude or Codex worker in it (default claude) |
 | `invite-worker.sh [--kind claude\|codex] <name> <session:window> [role]` | Register an existing Claude/Codex pane as a worker (no respawn; kind auto-detected) |
 | `uninvite-worker.sh <name>` | Remove an invited worker from the registry (pane untouched) |
-| `dispatch-safe.sh <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy |
+| `dispatch-safe.sh [--after <ids>] <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy; `--after` waits for other tasks first |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
 | `lib/kill-worker.sh <name>` | Close the worker's tmux window and clean up the registry |
 | `lib/start.sh` | Start every worker in `WORKERS=()` (config.env) |
 | `lib/stop.sh` | Kill the team's tmux session |
 | `lib/tasks.sh list \| today \| failed \| show <id> \| result <id>` | Inspect task history |
 | `check-worker-state.sh <name>` | One-line state report — for orchestrators deciding whether to dispatch |
-| `questions.sh list \| show <id> \| answer <id> "<text>"` | Read & answer worker-filed questions |
+| `questions.sh list \| show <id> \| answer <id> "<text>"` | Read & answer worker-filed questions (`WAIT?` marks a blocked asker) |
+| `lib/mailbox.sh outstanding <worker> \| renotify <worker>` | Find messages a worker never drained, and re-trigger it |
 | `notify-watcher.sh [hub_url]` | Subscribe to hub SSE and emit macOS desktop notifications (terminal-notifier / osascript) |
 | `dashboard.sh start \| stop \| status` | Start/stop hub + agent daemons (hub on `8765 + hash(team) % 100`) |
 | `dashboard-ui.sh start \| stop \| status` | Start/stop the Vite UI on `5173`; auto-syncs its proxy to the hub port. This is the screen you actually open in the browser |
 | `agent.sh start \| stop \| status` | Start/stop just the per-host agent |
-| `cleanup-serena.sh [--dry-run \| --all]` | Reap orphaned serena/lsp helper processes |
 
 **Worker-side tools** (called from inside a worker — via MCP when available, sh as fallback):
 
 | MCP tool | Legacy sh equivalent | Purpose |
 |---|---|---|
-| `mcp__darkarchon__ask(question, context)` | `lib/ask.sh "<q>"` | File a question for the orchestrator |
-| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient |
-| `mcp__darkarchon__mailbox_drain()` | `lib/mailbox.sh read <self>` | Read & remove own pending messages |
+| `mcp__darkarchon__ask(question, context, blocking=False)` | `lib/ask.sh [--blocking] "<q>"` | File a question for the orchestrator; `blocking` waits for the answer |
+| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@cwd:<dir>` |
+| `mcp__darkarchon__mailbox_drain()` | `lib/mailbox.sh read <self>` | Read & remove own pending messages (stamps `read_at`) |
 | `mcp__darkarchon__status_get()` | (no equivalent) | Self-introspection (mailbox count, recent tasks) |
+
+The MCP tools shell out to the same scripts rather than reimplementing them, so
+the message format, group addressing and trigger protocol have exactly one
+implementation.
+
+**Dispatch exit codes** (`dispatch-safe.sh`):
+
+| Code | Meaning |
+|---|---|
+| `0` | Dispatched and completed — result on stdout |
+| `10` | Worker busy / compacting / rate-limited, or another dispatch is in flight |
+| `11` | Unsent user input on the prompt line (`--force` overrides) |
+| `12` | Codex auth/stream error — run `codex login` |
+| `13` | A same-cwd peer worker is busy (edits are serialized) |
+| `14` | Worker is blocked on a permission prompt or a question |
+| `15` | Circuit breaker: repeated failures on this worker (`--force` overrides) |
+| `16` | An `--after` dependency failed, was cancelled, or doesn't exist |
+| `17` | Timed out waiting for an `--after` dependency |
+| `1`/`2`/`3` | Passthrough from `lib/dispatch.sh` — bad args / timeout / no result |
 
 Both write the same on-disk format under `$STATE_DIR/{questions,mailboxes}/`. The dashboard and `questions.sh` read either path identically — MCP is a more natural calling convention, not a different mechanism.
 
@@ -429,8 +448,15 @@ Everything lives in `config.env` and is overridable by environment:
 | `DARKARCHON_TEAM` | `default` | Team name. Becomes the tmux session name and parent of `~/.darkarchon/<team>/` |
 | `DARKARCHON_PROMPT_DIR` | unset | Optional dir of project-specific prompts layered on top of generic `prompts/` |
 | `CLAUDE_FLAGS` | `--permission-mode auto` | Passed to every spawned claude |
-| `TASK_TIMEOUT` | `300` | Seconds before a dispatched task is considered stale |
+| `TASK_MAX_SECONDS` | `3600` | Hard cap on one dispatch before it's failed as a timeout |
 | `POLL_INTERVAL` | `3` | Seconds between dispatch tail polls |
+| `STRICT_RESULT_HEADER` | `0` | Reject a result whose first line isn't the dispatch's DONE marker (default: warn only) |
+| `CIRCUIT_THRESHOLD` | `3` | Consecutive failed dispatches to one worker before refusing (`0` disables) |
+| `DEPS_WAIT_SEC` | `3600` | How long `--after` waits for its dependencies |
+| `MAILBOX_OUTSTANDING_SEC` | `300` | Age at which an undrained message is reported by `mailbox.sh outstanding` |
+| `ASK_TIMEOUT_SEC` | `1800` | Default wait for a blocking `ask` |
+
+`TASK_TIMEOUT` still appears in `config.env` but nothing reads it — `TASK_MAX_SECONDS` replaced it.
 
 Per-shell isolation (recommended via [direnv](https://direnv.net/)):
 
