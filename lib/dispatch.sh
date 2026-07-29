@@ -145,6 +145,7 @@ jq -n \
     --arg prompt "$PROMPT" \
     --arg dispatched_at "$DISPATCHED_AT" \
     --arg dispatched_by "$DISPATCHED_BY" \
+    --argjson deps "${DISPATCH_DEPS:-[]}" \
     '{
         id: $id,
         worker: $worker,
@@ -155,7 +156,8 @@ jq -n \
         prompt: $prompt,
         status: "pending",
         dispatched_at: $dispatched_at,
-        dispatched_by: $dispatched_by
+        dispatched_by: $dispatched_by,
+        deps: ($deps | tostring)
     }' | python3 "$HERE/task_store.py" insert
 
 update_status() {

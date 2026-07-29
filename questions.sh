@@ -32,17 +32,19 @@ case "$cmd" in
             echo "(no questions)"
             exit 0
         fi
-        printf '%-25s  %-12s  %-9s  %s\n' "ID" "FROM" "STATUS" "BODY (head)"
-        printf '%-25s  %-12s  %-9s  %s\n' "-------------------------" "------------" "---------" "------------"
+        printf '%-25s  %-12s  %-9s  %-5s  %s\n' "ID" "FROM" "STATUS" "WAIT?" "BODY (head)"
+        printf '%-25s  %-12s  %-9s  %-5s  %s\n' "-------------------------" "------------" "---------" "-----" "------------"
         for f in "${files[@]}"; do
             id=$(jq -r '.question_id' "$f" 2>/dev/null || echo "?")
             from=$(jq -r '.from_worker' "$f" 2>/dev/null || echo "?")
             status=$(jq -r '.status' "$f" 2>/dev/null || echo "?")
+            # A blocking asker is stopped until this is answered — answer those first.
+            blocking=$(jq -r 'if .blocking then "YES" else "-" end' "$f" 2>/dev/null || echo "-")
             body=$(jq -r '.body' "$f" 2>/dev/null | tr '\n' ' ' | cut -c1-80)
             if [ "$include_all" -eq 0 ] && [ "$status" != "pending" ]; then
                 continue
             fi
-            printf '%-25s  %-12s  %-9s  %s\n' "$id" "$from" "$status" "$body"
+            printf '%-25s  %-12s  %-9s  %-5s  %s\n' "$id" "$from" "$status" "$blocking" "$body"
         done
         ;;
 
@@ -70,13 +72,23 @@ case "$cmd" in
             exit 1
         fi
         from=$(jq -r '.from_worker' "$f")
-        # send via mailbox so the worker drains it on next NOTIFY/check
-        "$MAILBOX_SH" send "$from" --from "orchestrator" "ANSWER to $id: $ans" >/dev/null
-        # mark answered
+
+        # Record the answer FIRST. A blocking `ask` waits on this file, not on
+        # the mailbox, and this script runs under `set -e` — so with the old
+        # order, a mailbox failure (unregistered sender, dead pane) killed the
+        # script before the answer was ever written, leaving the asker blocked
+        # until timeout on a question that had in fact been answered.
         tmp="$f.tmp"
         jq --arg ans "$ans" --arg ts "$(date -u +%FT%TZ)" \
             '. + {status:"answered", answer:$ans, answered_at:$ts}' "$f" > "$tmp" && mv "$tmp" "$f"
-        echo "answered $id (delivered to $from via mailbox)"
+
+        # Then notify. Non-blocking askers learn the answer through the mailbox,
+        # so a failure here is worth reporting, but the answer is already durable.
+        if "$MAILBOX_SH" send "$from" --from "orchestrator" "ANSWER to $id: $ans" >/dev/null 2>&1; then
+            echo "answered $id (delivered to $from via mailbox)"
+        else
+            echo "answered $id (recorded; mailbox delivery to '$from' failed)" >&2
+        fi
         ;;
 
     dismiss)

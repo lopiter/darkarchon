@@ -41,7 +41,8 @@ def _gen_id() -> str:
 
 
 @mcp.tool()
-def ask(question: str, context: str = "") -> str:
+def ask(question: str, context: str = "", blocking: bool = False,
+        timeout_sec: int = 1800) -> str:
     """File a question for the orchestrator (the human user) to answer.
 
     Use whenever a human decision is needed that the role prompt does not
@@ -53,42 +54,49 @@ def ask(question: str, context: str = "") -> str:
         question: The question itself. Be specific and include any choice
                   space relevant to deciding.
         context: Optional context about what you tried / why you're stuck.
+        blocking: Wait for the answer and return it, instead of filing and
+                  moving on. Use only when you genuinely cannot proceed on any
+                  assumption — you hold your turn open for up to timeout_sec.
+        timeout_sec: How long to wait when blocking. On timeout the question
+                  stays pending and answerable; decide for yourself and say
+                  which assumption you made.
 
     Returns:
-        Question ID.
+        The question ID, or — when blocking — the answer text.
     """
-    qdir = STATE_DIR / "questions"
-    qdir.mkdir(parents=True, exist_ok=True)
-    qid = _gen_id()
     body = question
     if context:
         body = f"{question}\n\n---\nContext:\n{context}"
-    data = {
-        "question_id": qid,
-        "from_worker": WORKER_NAME,
-        "body": body,
-        "created_at": _now_iso(),
-        "status": "pending",
-    }
-    (qdir / f"{qid}.json").write_text(json.dumps(data))
-    return f"Question filed: {qid}"
+    args = ["--from", WORKER_NAME]
+    if blocking:
+        args += ["--blocking", "--timeout", str(timeout_sec)]
+    r = _run_lib("ask.sh", *args, body, timeout=timeout_sec + 30 if blocking else 30)
+    out = (r.stdout or "").strip()
+    if r.returncode == 0:
+        return out if blocking else f"Question filed: {out}"
+    # 2 = dismissed, 3 = timed out; both leave the worker to decide for itself.
+    return f"ask exited {r.returncode}: {(r.stderr or '').strip() or out}"
+
+
+def _run_lib(script: str, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run one of the lib/ shell helpers, which own the on-disk formats.
+
+    These tools used to reimplement the shell scripts in Python, and the copies
+    drifted: mailbox_send never pressed Enter after its tmux trigger, so the
+    notification sat unsent on the recipient's prompt line — which the state
+    detector then read as `unsent`, and dispatch-safe refuses to dispatch to a
+    worker in that state. Delegating keeps the message format, group addressing,
+    read_at stamping and the trigger protocol in exactly one place.
+    """
+    return subprocess.run(
+        [str(Path(__file__).resolve().parent / script), *args],
+        capture_output=True, text=True, timeout=timeout,
+        env={**os.environ, "EE_WORKER_NAME": WORKER_NAME},
+    )
 
 
 def _mailbox_sh(*args: str) -> subprocess.CompletedProcess:
-    """Run lib/mailbox.sh, which owns the mailbox format and delivery rules.
-
-    This tool used to reimplement writing and notifying in Python, and the two
-    copies drifted: the Python one never pressed Enter after the trigger, so its
-    notification sat unsent on the recipient's prompt line — which the state
-    detector then read as `unsent` and dispatch-safe refused to dispatch to.
-    Delegating keeps group addressing, read_at stamping and the trigger protocol
-    in exactly one place.
-    """
-    return subprocess.run(
-        [str(Path(__file__).resolve().parent / "mailbox.sh"), *args],
-        capture_output=True, text=True, timeout=30,
-        env={**os.environ, "EE_WORKER_NAME": WORKER_NAME},
-    )
+    return _run_lib("mailbox.sh", *args)
 
 
 @mcp.tool()
