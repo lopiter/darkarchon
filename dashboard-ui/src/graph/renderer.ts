@@ -84,6 +84,8 @@ const RIPPLE_MS = 550;
 const BUMP_MS = 260;
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
+const FOCUS_SCALE = 1.5;
+const FOCUS_DUR = 420;
 
 type Bezier = [number, number, number, number, number, number, number, number];
 
@@ -120,6 +122,16 @@ export class GraphRenderer {
   private topoKey = '';
 
   private cam = { x: 0, y: 0, s: 1 };
+  private camAnim: {
+    fromX: number;
+    fromY: number;
+    fromS: number;
+    toX: number;
+    toY: number;
+    toS: number;
+    t0: number;
+    dur: number;
+  } | null = null;
   private dpr = 1;
   private vw = 0;
   private vh = 0;
@@ -265,6 +277,7 @@ export class GraphRenderer {
       if (this.spaceHeld || e.button === 1) {
         this.panning = true;
         this.panStart = { mx: e.clientX, my: e.clientY, cx: this.cam.x, cy: this.cam.y };
+        this.camAnim = null;
         e.preventDefault();
         this.syncCursor();
       }
@@ -295,6 +308,7 @@ export class GraphRenderer {
           color: PAL.accent,
           big: true,
         });
+        this.focusOn(hit);
         this.cb.onSelectWorker(hit.id);
       } else {
         const [wx, wy] = this.toWorld(e.clientX, e.clientY);
@@ -304,6 +318,7 @@ export class GraphRenderer {
     });
     on<'wheel'>(this.cv, 'wheel', (e) => {
       e.preventDefault();
+      this.camAnim = null;
       const f = Math.exp(-e.deltaY * 0.0012);
       const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.cam.s * f));
       this.cam.x = e.clientX - (e.clientX - this.cam.x) * (s2 / this.cam.s);
@@ -334,6 +349,7 @@ export class GraphRenderer {
 
   private fit(): void {
     if (!this.nodes.length || !this.vw) return;
+    this.camAnim = null;
     let x0 = Infinity;
     let y0 = Infinity;
     let x1 = -Infinity;
@@ -353,6 +369,33 @@ export class GraphRenderer {
     this.cam.s = Math.max(MIN_SCALE, this.cam.s);
     this.cam.x = (this.vw - (x1 - x0) * this.cam.s) / 2 - x0 * this.cam.s;
     this.cam.y = (this.vh - (y1 - y0) * this.cam.s) / 2 - y0 * this.cam.s;
+  }
+
+  /** Smoothly recenters + zooms the camera on a clicked node. Never zooms
+   * out — if the user is already closer than FOCUS_SCALE, that level holds. */
+  private focusOn(n: GraphNode): void {
+    const targetScale = Math.min(MAX_SCALE, Math.max(this.cam.s, FOCUS_SCALE));
+    const cx = n.x + n.w / 2;
+    const cy = n.y;
+    const toX = this.vw / 2 - cx * targetScale;
+    const toY = this.vh / 2 - cy * targetScale;
+    if (this.reduceMotion) {
+      this.cam.x = toX;
+      this.cam.y = toY;
+      this.cam.s = targetScale;
+      this.camAnim = null;
+      return;
+    }
+    this.camAnim = {
+      fromX: this.cam.x,
+      fromY: this.cam.y,
+      fromS: this.cam.s,
+      toX,
+      toY,
+      toS: targetScale,
+      t0: performance.now(),
+      dur: FOCUS_DUR,
+    };
   }
 
   private toWorld(sx: number, sy: number): [number, number] {
@@ -393,6 +436,16 @@ export class GraphRenderer {
   private frame = (): void => {
     const t = performance.now();
     const c = this.ctx;
+
+    if (this.camAnim) {
+      const a = this.camAnim;
+      const p = Math.min(1, (t - a.t0) / a.dur);
+      const eased = 1 - (1 - p) ** 3; // ease-out cubic
+      this.cam.x = a.fromX + (a.toX - a.fromX) * eased;
+      this.cam.y = a.fromY + (a.toY - a.fromY) * eased;
+      this.cam.s = a.fromS + (a.toS - a.fromS) * eased;
+      if (p >= 1) this.camAnim = null;
+    }
 
     if (this.cv.clientWidth !== this.vw || this.cv.clientHeight !== this.vh) this.resize();
 
