@@ -15,6 +15,21 @@ import { isHidden } from '../utils/visibility';
  * status label (no separate effect needed).
  */
 export type PulseColor = 'amber' | 'red' | 'scale';
+
+/** Which top-level view is showing: the card dashboard or the canvas graph. */
+export type ViewMode = 'cards' | 'graph';
+
+const VIEW_STORAGE_KEY = 'darkarchon-view';
+
+function readInitialView(): ViewMode {
+  try {
+    const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (saved === 'cards' || saved === 'graph') return saved;
+  } catch {
+    /* localStorage unavailable (private mode / SSR) — use default */
+  }
+  return 'graph';
+}
 export interface PulseEntry {
   color: PulseColor;
   /** Monotonic counter — bumped each markPulse() so the same color → same color
@@ -38,6 +53,10 @@ interface DashboardStore {
 
   /** Phase 3 — id of the worker whose detail panel is open. `null` = closed. */
   selectedWorkerId: string | null;
+
+  /** Graph view round — current top-level view, persisted to localStorage. */
+  view: ViewMode;
+  setView: (view: ViewMode) => void;
 
   /** Sole data entry point. Phase 1 dummy and Phase 3 fetch both feed this. */
   setRawStatus: (raw: RawStatusResponse) => void;
@@ -76,6 +95,16 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
   newUntil: new Map(),
   deadSince: new Map(),
   selectedWorkerId: null,
+  view: readInitialView(),
+
+  setView: (view) => {
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, view);
+    } catch {
+      /* ignore persistence failures */
+    }
+    set({ view });
+  },
 
   setRawStatus: (raw) => set({ hosts: transformRawStatus(raw) }),
   setHosts: (hosts) => set({ hosts }),

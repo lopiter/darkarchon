@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { DebugPanel } from './components/DebugPanel/DebugPanel';
 import { DetailPanel } from './components/DetailPanel/DetailPanel';
+import { GraphView } from './components/GraphView/GraphView';
+import { ViewToggle } from './components/ViewToggle/ViewToggle';
 import { useEventStream } from './hooks/useEventStream';
 import { useHubPolling } from './hooks/useHubPolling';
 import { useNotifications } from './hooks/useNotifications';
@@ -21,6 +23,7 @@ if (import.meta.env.DEV) {
 }
 
 export function App() {
+  const view = useDashboardStore((s) => s.view);
   useNotifications();
   // Both no-op when USE_DUMMY=1 (guarded inside each hook).
   useHubPolling();
@@ -43,7 +46,8 @@ export function App() {
   return (
     <>
       {USE_DUMMY && <DebugPanel />}
-      <Dashboard />
+      {view === 'graph' ? <GraphView /> : <Dashboard />}
+      <ViewToggle />
       <DetailPanel />
     </>
   );

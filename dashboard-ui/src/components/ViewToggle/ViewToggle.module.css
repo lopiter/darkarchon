@@ -1,0 +1,19 @@
+/* Mirrors ThemeToggle's pill, stacked just above it (bottom-left). */
+.toggle {
+  position: fixed;
+  bottom: 88px;
+  left: 16px;
+  z-index: 90;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease-out, color 0.15s ease-out;
+}
+.toggle:hover {
+  border-color: var(--border-stronger);
+  color: var(--text-primary);
+}

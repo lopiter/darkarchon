@@ -9,7 +9,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_REGISTRY_LINE = re.compile(r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL|KIND)=(.*)$", re.M)
+_REGISTRY_LINE = re.compile(
+    r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL|KIND|SPAWNED_BY)=(.*)$", re.M
+)
 
 
 def parse_registry_text(text: str) -> dict:
@@ -32,6 +34,9 @@ def parse_registry_text(text: str) -> dict:
             "external": info.get("EXTERNAL") == "1",
             # Agent flavor (claude|codex). Absent in legacy entries ⇒ claude.
             "agent_kind": info.get("KIND", "claude"),
+            # Worker name of whoever spawned this one (lineage). Absent for
+            # legacy entries, invited panes, and human-spawned workers.
+            "spawned_by": info.get("SPAWNED_BY", ""),
         }
     return result
 
@@ -92,6 +97,7 @@ def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
                     "cwd": meta.get("cwd") or p["cwd"],
                     "external": meta.get("external", False),
                     "kind": "registered",
+                    "spawned_by": meta.get("spawned_by", ""),
                 }
             )
         else:
@@ -102,6 +108,7 @@ def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
                     "role": "",
                     "external": False,
                     "kind": "discovered",
+                    "spawned_by": "",
                 }
             )
     return out

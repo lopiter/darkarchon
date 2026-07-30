@@ -85,6 +85,8 @@ export const dummyStatus: RawStatusResponse = {
       outgoing_dispatches: [],
       team_name: 'myteam',
       is_orchestrator: false,
+      // Same-team lineage: spawner IS the tree parent → graph draws no extra link.
+      spawned_by: 'dashboard',
       recent_output: [
         '> Implementing OrderController',
         '✓ Added @RestController',
@@ -166,6 +168,8 @@ export const dummyStatus: RawStatusResponse = {
       outgoing_dispatches: [],
       team_name: 'myteam-feature_a',
       is_orchestrator: true,
+      // Cross-team lineage (hermes pattern): dashed link dashboard → voc.
+      spawned_by: 'dashboard',
       recent_output: [
         '> Scanning VOC backlog',
         '  found 3 unprocessed entries',

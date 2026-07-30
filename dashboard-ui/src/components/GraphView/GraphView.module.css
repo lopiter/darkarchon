@@ -1,0 +1,163 @@
+/*
+ * Graph view is a deliberate single-theme surface — the approved mockup's
+ * dark "mission control" identity. Colors here are fixed twins of the
+ * renderer's PAL constants (src/graph/renderer.ts), NOT tokens.css values;
+ * the light/dark toggle intentionally doesn't touch this view.
+ */
+
+.wrap {
+  position: fixed;
+  inset: 0;
+  --g-card: rgba(13, 20, 32, 0.85);
+  --g-edge: #1b2637;
+  --g-ink: #e6edf7;
+  --g-muted: #8a97ab;
+  --g-faint: #4a5568;
+  --g-accent: #4fd6ff;
+  --g-busy: #ffb454;
+  --g-ok: #3ddc97;
+  --g-warn: #ffcf5c;
+  --g-bad: #ff5c7a;
+  --g-orch: #a78bfa;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── top HUD: brand + state legend ── */
+.hudTop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(7, 11, 18, 0.92), rgba(7, 11, 18, 0));
+}
+
+.brand {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--g-ink);
+}
+
+.slash {
+  color: var(--g-accent);
+}
+
+.legend {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--g-muted);
+  text-transform: uppercase;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* ── event feed: bottom-left, stacked above the toggle pills ── */
+.feed {
+  position: absolute;
+  left: 16px;
+  bottom: 124px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.ev {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--g-muted);
+  background: var(--g-card);
+  border-left: 2px solid var(--g-faint);
+  padding: 3px 10px;
+  border-radius: 0 4px 4px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: ev-in 0.25s ease-out;
+}
+
+.ev.dispatch {
+  border-left-color: var(--g-accent);
+}
+.ev.done {
+  border-left-color: var(--g-ok);
+}
+.ev.warn {
+  border-left-color: var(--g-warn);
+}
+.ev.old {
+  opacity: 0.45;
+}
+
+@keyframes ev-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+.hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--g-muted);
+  background: var(--g-card);
+  border: 1px solid var(--g-edge);
+  padding: 6px 14px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.hint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--g-ink);
+  background: var(--g-edge);
+  border: 1px solid #2a3850;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+}

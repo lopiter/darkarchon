@@ -13,6 +13,29 @@ def test_parse_registry_extracts_agent_kind_defaulting_to_claude():
     assert reg["t:legacy"]["agent_kind"] == "claude"
 
 
+def test_parse_registry_extracts_spawned_by_defaulting_to_empty():
+    text = (
+        "WORKER_w1_NAME=w1\nWORKER_w1_TARGET=t:w1\nWORKER_w1_SPAWNED_BY=hermes\n"
+        "WORKER_w2_NAME=w2\nWORKER_w2_TARGET=t:w2\n"  # no SPAWNED_BY
+    )
+    reg = parse_registry_text(text)
+    assert reg["t:w1"]["spawned_by"] == "hermes"
+    assert reg["t:w2"]["spawned_by"] == ""
+
+
+def test_resolve_workers_carries_spawned_by_through():
+    scanned = [
+        {"target": "t:w1.0", "process": "claude", "cwd": "/x", "pane_pid": "1", "state": "idle"},
+        {"target": "t:zzz.0", "process": "claude", "cwd": "/y", "pane_pid": "2", "state": "idle"},
+    ]
+    registry = parse_registry_text(
+        "WORKER_w1_NAME=w1\nWORKER_w1_TARGET=t:w1\nWORKER_w1_SPAWNED_BY=hermes\n"
+    )
+    resolved = resolve_workers(scanned, registry)
+    assert resolved[0]["spawned_by"] == "hermes"
+    assert resolved[1]["spawned_by"] == ""  # discovered pane — no lineage
+
+
 def test_parse_registry_file_tolerates_non_utf8_bytes(tmp_path):
     """A registry may carry a mojibake byte in a free-form ROLE value. Parsing
     must not crash (it would take down the whole multi-team agent merge); the

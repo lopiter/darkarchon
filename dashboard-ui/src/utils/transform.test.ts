@@ -42,6 +42,18 @@ function res(workers: RawWorker[]): RawStatusResponse {
 }
 
 describe('transformRawStatus', () => {
+  it('maps spawned_by to spawnedBy, absent/empty → undefined', () => {
+    const hosts = transformRawStatus(
+      res([
+        rw({ name: 'w1', target: 'a:1', spawned_by: 'hermes' }),
+        rw({ name: 'w2', target: 'a:2', spawned_by: '' }),
+        rw({ name: 'w3', target: 'a:3' }),
+      ])
+    );
+    const workers = hosts[0]!.teams[0]!.workers;
+    expect(workers.map((w) => w.spawnedBy)).toEqual(['hermes', undefined, undefined]);
+  });
+
   it('groups workers by host then by team_name', () => {
     const hosts = transformRawStatus(
       res([

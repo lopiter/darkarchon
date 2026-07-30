@@ -37,10 +37,17 @@ source "$HERE/_lib.sh"
 # `claude --resume <id>` so its previous conversation survives a reboot/kill.
 # The id is recorded by lib/state-hook.sh in $STATE_DIR/states/<safe>.json.
 # claude-kind workers only.
+#
+# Optional --spawned-by <name> records who spawned this worker (registry key
+# WORKER_<sn>_SPAWNED_BY, surfaced by the dashboard as a lineage link).
+# Defaults to $EE_WORKER_NAME — when an orchestrator/hermes worker calls this
+# script, its own worker name is inherited automatically; a human shell has
+# no EE_WORKER_NAME and records nothing.
 KIND=claude
 ENV_PREFIX=""
 SESSION_OVERRIDE=""
 RESUME_SESSION=""
+SPAWNED_BY="${EE_WORKER_NAME:-}"
 add_env() {
     if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=. ]]; then
         echo "ERROR: --env expects KEY=VALUE, got '$1'" >&2
@@ -58,6 +65,8 @@ while [ $# -gt 0 ]; do
         --session=*) SESSION_OVERRIDE="${1#--session=}"; shift ;;
         --resume-session)   RESUME_SESSION="${2:-}"; shift 2 ;;
         --resume-session=*) RESUME_SESSION="${1#--resume-session=}"; shift ;;
+        --spawned-by)   SPAWNED_BY="${2:-}"; shift 2 ;;
+        --spawned-by=*) SPAWNED_BY="${1#--spawned-by=}"; shift ;;
         --)          shift; break ;;
         -*)          echo "ERROR: unknown option '$1'" >&2; exit 1 ;;
         *)           break ;;
@@ -65,7 +74,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] [--spawned-by <name>] <name> <cwd> [<role>]" >&2
     exit 1
 fi
 
@@ -194,6 +203,9 @@ _persist_spawn_registration() {
         printf 'WORKER_%s_DIR=%q\n'    "$SAFE" "$CWD"
         printf 'WORKER_%s_ROLE=%q\n'   "$SAFE" "$ROLE"
         printf 'WORKER_%s_KIND=%q\n'   "$SAFE" "$KIND"
+        if [ -n "$SPAWNED_BY" ]; then
+            printf 'WORKER_%s_SPAWNED_BY=%q\n' "$SAFE" "$SPAWNED_BY"
+        fi
         # Record a dedicated host session so kill-worker.sh can tell "ours,
         # just in its own session" apart from an invited external pane.
         if [ -n "$SESSION_OVERRIDE" ]; then

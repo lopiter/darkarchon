@@ -58,6 +58,12 @@ export interface RawWorker {
   team_name: string;
   is_orchestrator: boolean;
   /**
+   * Worker name of whoever spawned this one (registry WORKER_<sn>_SPAWNED_BY,
+   * recorded by spawn-worker.sh from $EE_WORKER_NAME / --spawned-by).
+   * Empty/absent for legacy entries, invited panes, and human-spawned workers.
+   */
+  spawned_by?: string;
+  /**
    * True when an attached tmux client is currently viewing this pane.
    * Used to suppress OS push for the pane the user is actively looking at /
    * typing in. Optional — legacy agents predating the field omit it (→ false).

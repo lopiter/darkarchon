@@ -30,6 +30,8 @@ export interface Worker {
   process: string;
   detail?: string;
   isOrchestrator: boolean;
+  /** Worker name of whoever spawned this one — lineage, e.g. 'hermes'. */
+  spawnedBy?: string;
   /**
    * True when the user is currently viewing this pane (attached tmux client,
    * active window + pane). OS push is suppressed for the focused pane — no

@@ -490,7 +490,12 @@ Shells with different `DARKARCHON_TEAM` values land in different tmux sessions a
 
 ## Dashboard
 
-The React UI shows every worker grouped by host → team, with live state badges (idle, busy, awaiting_user, rate_limited, dead) and OS push notifications when a worker needs you. Dark mode only, desktop only. Dummy data mode (`VITE_USE_DUMMY=1`) available for visual development without a running hub.
+The React UI shows every worker grouped by host → team, with live state badges (idle, busy, awaiting_user, rate_limited, dead) and OS push notifications when a worker needs you. Desktop only. Dummy data mode (`VITE_USE_DUMMY=1`) available for visual development without a running hub.
+
+Two views, toggled by the bottom-left pill (persisted):
+
+- **Graph** (default) — canvas tree of host → orchestrator → workers. Busy workers glow with a live spinner, in-flight dispatches stream particles from the actual sender (resolved from `incoming_dispatches[].label`), and `spawned_by` lineage (registry `WORKER_<sn>_SPAWNED_BY`, recorded automatically from `$EE_WORKER_NAME` when an orchestrator/hermes calls `spawn-worker.sh`, or via `--spawned-by`) renders as a dashed violet link — so hermes-spawned orchestrators stay visibly attached to hermes even across teams. Space+drag pans, scroll zooms, click opens the detail panel.
+- **Cards** — the compact row layout, light/dark themed.
 
 ---
 

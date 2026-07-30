@@ -373,6 +373,12 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
     args = [str(script), "--env", f"DARKARCHON_TEAM={name}", "--session", name]
     if resume_id:
         args += ["--resume-session", resume_id]
+    # Lineage for the dashboard graph: hermes is usually not a spawned worker
+    # itself (no EE_WORKER_NAME), so spawn-worker.sh's automatic default would
+    # record nothing — pass the manager identity explicitly.
+    spawner = os.environ.get("EE_WORKER_NAME") or str(manager_team() or "")
+    if spawner:
+        args += ["--spawned-by", spawner]
     args += [name, str(workdir), "orchestrator"]
     proc = _run(args, timeout=30, extra_env=extra_env)
     if proc.returncode != 0:
