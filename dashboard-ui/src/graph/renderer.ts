@@ -86,6 +86,8 @@ const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
 const FOCUS_SCALE = 1.5;
 const FOCUS_DUR = 420;
+/** Auto-focus stays quiet this long after any manual pan/zoom/click. */
+const USER_CAM_GRACE_MS = 4000;
 
 type Bezier = [number, number, number, number, number, number, number, number];
 
@@ -145,6 +147,7 @@ export class GraphRenderer {
 
   private selectedId: string | null = null;
   private hoverId: string | null = null;
+  private lastUserCamAt = -Infinity;
   private spaceHeld = false;
   private panning = false;
   private panStart: { mx: number; my: number; cx: number; cy: number } | null = null;
@@ -200,6 +203,14 @@ export class GraphRenderer {
 
   setSelected(id: string | null): void {
     this.selectedId = id;
+  }
+
+  /** State-driven camera follow (awaiting > done). Skipped while the user
+   * is steering the camera themselves — never fight a human hand. */
+  autoFocusOn(id: string): void {
+    if (performance.now() - this.lastUserCamAt < USER_CAM_GRACE_MS) return;
+    const n = this.byId.get(id);
+    if (n) this.focusOn(n);
   }
 
   burst(f: FlowBurst): void {
@@ -278,6 +289,7 @@ export class GraphRenderer {
         this.panning = true;
         this.panStart = { mx: e.clientX, my: e.clientY, cx: this.cam.x, cy: this.cam.y };
         this.camAnim = null;
+        this.lastUserCamAt = performance.now();
         e.preventDefault();
         this.syncCursor();
       }
@@ -308,6 +320,7 @@ export class GraphRenderer {
           color: PAL.accent,
           big: true,
         });
+        this.lastUserCamAt = performance.now();
         this.focusOn(hit);
         this.cb.onSelectWorker(hit.id);
       } else {
@@ -319,6 +332,7 @@ export class GraphRenderer {
     on<'wheel'>(this.cv, 'wheel', (e) => {
       e.preventDefault();
       this.camAnim = null;
+      this.lastUserCamAt = performance.now();
       const f = Math.exp(-e.deltaY * 0.0012);
       const s2 = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.cam.s * f));
       this.cam.x = e.clientX - (e.clientX - this.cam.x) * (s2 / this.cam.s);

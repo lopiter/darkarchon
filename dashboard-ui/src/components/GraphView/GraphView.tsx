@@ -14,6 +14,7 @@ import { buildGraph, type GraphNode } from '../../graph/layout';
 import { GraphRenderer } from '../../graph/renderer';
 import { useDashboardStore } from '../../store/dashboard';
 import type { Host } from '../../types/domain';
+import { initialAutoFocusState, nextAutoFocus } from '../../utils/autoFocus';
 import { diffWorkers, type Transition } from '../../utils/diffWorkers';
 import { isHostStale } from '../../utils/transform';
 import { EmptyState } from '../EmptyState/EmptyState';
@@ -63,6 +64,7 @@ export function GraphView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
   const prevHostsRef = useRef<Host[]>([]);
+  const autoFocusRef = useRef(initialAutoFocusState());
 
   const hosts = useDashboardStore((s) => s.hosts);
   const selectedWorkerId = useDashboardStore((s) => s.selectedWorkerId);
@@ -99,6 +101,12 @@ export function GraphView() {
 
     const items = transitionsToFeed(transitions, nodes);
     if (items.length) setFeed((prev) => [...items, ...prev].slice(0, FEED_MAX));
+
+    // Camera follow: awaiting-user (oldest wins, holds) > just-completed.
+    const af = nextAutoFocus(autoFocusRef.current, hosts, transitions);
+    autoFocusRef.current = af.state;
+    if (af.focusId) renderer.autoFocusOn(af.focusId);
+
     prevHostsRef.current = hosts;
   }, [hosts]);
 
