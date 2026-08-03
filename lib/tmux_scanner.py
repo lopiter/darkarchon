@@ -52,12 +52,17 @@ def _has_codex_marker(plain: str) -> bool:
     return sum(1 for m in _CODEX_MARKERS if m in plain) >= 2
 
 
-def _pane_window_keys(target: str, window_name: str) -> list[str]:
+def _pane_window_keys(target: str, window_name: str, window_id: str = "") -> list[str]:
     """Registry keys a pane could match. The registry stores `session:window-name`
     (spawn-worker builds the target from the worker NAME), while a scanned pane's
     target is `session:window-index.pane-index`. Try both shapes so a registered
-    worker is recognized regardless of how the pane is addressed."""
-    keys = [target]
+    worker is recognized regardless of how the pane is addressed.
+
+    The tmux window id (`@5`) goes first when known: it is assigned at creation
+    and never changes, whereas both other shapes are mutable — a window can be
+    renamed, and window indices shift as windows are closed."""
+    keys = [window_id] if window_id else []
+    keys.append(target)
     if "." in target.split(":", 1)[-1]:
         keys.append(target.rsplit(".", 1)[0])  # strip .pane
     if window_name:
@@ -73,6 +78,9 @@ class PaneInfo:
     target: str  # session:window.pane
     cwd: str
     window_name: str
+    # tmux's immutable handle for the window ('@5'). Unique per tmux server and
+    # stable for the window's whole life, unlike name or index.
+    window_id: str = ""
     # True when an attached client is currently viewing this pane (session
     # attached + window active in its session + pane active in its window).
     # Used to suppress desktop notifications for the pane the user is looking
@@ -110,10 +118,10 @@ def list_llm_panes(
             "list-panes",
             "-a",
             "-F",
-            # session_attached/window_active/pane_active come right after pane_pid
-            # (all single tokens) so pane_current_path stays the trailing remainder
-            # and can still contain spaces.
-            "#{pane_pid} #{session_attached} #{window_active} #{pane_active} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
+            # session_attached/window_active/pane_active/window_id come right
+            # after pane_pid (all single tokens) so pane_current_path stays the
+            # trailing remainder and can still contain spaces.
+            "#{pane_pid} #{session_attached} #{window_active} #{pane_active} #{window_id} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
         ]
     )
     if rc != 0:
@@ -121,13 +129,16 @@ def list_llm_panes(
 
     panes: list[PaneInfo] = []
     for line in out.splitlines():
-        parts = line.split(None, 7)
-        if len(parts) < 8:
+        parts = line.split(None, 8)
+        if len(parts) < 9:
             continue
-        pid, attached, win_active, pane_active, process, target, window_name, cwd = parts
+        (pid, attached, win_active, pane_active, window_id,
+         process, target, window_name, cwd) = parts
         match_proc = process in allowed_processes or bool(_NODE_VERSION_RE.match(process))
         match_window = window_name in window_names
-        match_known = any(k in known_kinds for k in _pane_window_keys(target, window_name))
+        match_known = any(
+            k in known_kinds for k in _pane_window_keys(target, window_name, window_id)
+        )
         if not (match_proc or match_window or match_known):
             continue
         focused = attached.isdigit() and int(attached) > 0 and win_active == "1" and pane_active == "1"
@@ -137,6 +148,7 @@ def list_llm_panes(
                 process=process,
                 target=target,
                 window_name=window_name,
+                window_id=window_id,
                 cwd=cwd,
                 focused=focused,
             )
@@ -200,7 +212,7 @@ def scan_panes(
         # plain `node` process and (b) codex's box-drawing `─` falsely matching
         # the Claude marker — both would otherwise misroute to the wrong detector.
         registered_kind = None
-        for k in _pane_window_keys(p.target, p.window_name):
+        for k in _pane_window_keys(p.target, p.window_name, p.window_id):
             if k in known_kinds:
                 registered_kind = known_kinds[k]
                 break
@@ -260,6 +272,7 @@ def scan_panes(
                 "target": p.target,
                 "process": effective_process,
                 "window_name": p.window_name,
+                "window_id": p.window_id,
                 "cwd": p.cwd,
                 "pane_pid": p.pid,
                 "focused": p.focused,

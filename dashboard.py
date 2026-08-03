@@ -395,7 +395,10 @@ def _registered_teams_by_target() -> dict:
             text = reg_file.read_text(errors="replace")
         except OSError:
             continue
-        for m in _re.finditer(r"^WORKER_\w+_TARGET=(.+)$", text, _re.M):
+        # WINDOW_ID as well as TARGET: a renamed window still resolves to its
+        # worker via the id, and team assignment has to follow or the pane
+        # keeps its name but loses its group.
+        for m in _re.finditer(r"^WORKER_\w+_(?:TARGET|WINDOW_ID)=(.+)$", text, _re.M):
             val = m.group(1).strip().strip("'").strip('"')
             if val:
                 result[val] = team_name
@@ -413,7 +416,9 @@ def _registered_team_for_worker(worker: dict, teams_by_target: dict) -> str | No
     if not target:
         return None
     session, _, win = target.partition(":")
-    candidates = [target]
+    # Window id first — it is the one key a rename can't invalidate.
+    candidates = [worker["window_id"]] if worker.get("window_id") else []
+    candidates.append(target)
     if win and "." in win:
         candidates.append(f"{session}:{win.rsplit('.', 1)[0]}")  # drop .pane
     window_name = worker.get("window_name")

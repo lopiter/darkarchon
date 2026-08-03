@@ -189,6 +189,11 @@ fi
 
 TARGET="$WIN_SESSION:$NAME"
 
+# tmux's immutable handle for the window. Recorded so the resolver can identify
+# this pane even if the name lock above is ever lifted or overridden — an id
+# never changes, a name only mostly doesn't.
+WINDOW_ID="$(tmux display-message -p -t "=$WIN_SESSION:$NAME" '#{window_id}' 2>/dev/null || true)"
+
 SAFE="$(safe_name "$NAME")"
 
 # Persist runtime registration under a lock so concurrent spawn/invite/kill
@@ -200,6 +205,9 @@ _persist_spawn_registration() {
         echo "# spawned $(date -u +%FT%TZ)  name=$NAME"
         printf 'WORKER_%s_NAME=%q\n'   "$SAFE" "$NAME"
         printf 'WORKER_%s_TARGET=%q\n' "$SAFE" "$TARGET"
+        if [ -n "$WINDOW_ID" ]; then
+            printf 'WORKER_%s_WINDOW_ID=%q\n' "$SAFE" "$WINDOW_ID"
+        fi
         printf 'WORKER_%s_DIR=%q\n'    "$SAFE" "$CWD"
         printf 'WORKER_%s_ROLE=%q\n'   "$SAFE" "$ROLE"
         printf 'WORKER_%s_KIND=%q\n'   "$SAFE" "$KIND"

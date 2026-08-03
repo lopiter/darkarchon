@@ -495,6 +495,21 @@ Shells with different `DARKARCHON_TEAM` values land in different tmux sessions a
 scans every tmux pane on the machine and reports them under one `HOST_ID`. Run
 exactly one agent per host — `agent.sh start` refuses when another is alive.
 
+### How a pane is matched to its registration
+
+`workers-runtime.env` records a worker's tmux `TARGET` as `session:window-name`, but a scanned pane reports `session:window-index.pane-index`. The resolver therefore tries several key shapes, in order:
+
+1. `WINDOW_ID` — tmux's immutable handle for the window (`@5`)
+2. the target as reported (`myteam:2.1`)
+3. the same without the pane part (`myteam:2`)
+4. `session:current-window-name` (`myteam:backend`)
+
+Shapes 2–4 are all mutable. A window can be renamed, and tmux's `automatic-rename` does exactly that on its own: it follows `pane_current_command`, which for Claude Code is the runtime version string, so a window called `backend` silently becomes `2.1.220` and stops matching. Indices shift as windows are closed. Both spawn and invite therefore pin the name (`automatic-rename off`, `allow-rename off`) **and** record the window id, which survives both.
+
+The id is checked against the session it was registered in before being trusted, because tmux reassigns ids from `@0` when its server restarts.
+
+Registrations written before `WINDOW_ID` existed keep resolving by name — there is nothing to migrate, though re-inviting an external pane will add the id.
+
 ---
 
 ## Team lifecycle
