@@ -1,4 +1,7 @@
-# Copy to $STATE_DIR/agent.config and edit.
+# Copy to ~/.darkarchon/agent.config and edit.
+#
+# One config per host, not per team: the agent scans every tmux pane on the
+# machine and reports them all under a single HOST_ID.
 
 # Main PC hub URL (LAN IP). Mandatory.
 HUB_URL=http://192.168.0.10:8774
@@ -6,9 +9,12 @@ HUB_URL=http://192.168.0.10:8774
 # Identifier shown in the dashboard. Defaults to hostname if omitted.
 HOST_ID=main-pc
 
-# Path to workers-runtime.env. Defaults to $STATE_DIR/workers-runtime.env.
-# Only the main PC (where spawn-worker.sh runs) has this file; remote PCs leave default and it's silently skipped.
-REGISTRY_PATH=
+# Parent of the per-team state dirs. Defaults to ~/.darkarchon. The agent sweeps
+# every team under it for workers-runtime.env, heartbeats and hook state, so a
+# worker is resolved to its registered name regardless of which team spawned it.
+# A host with no team dirs (a remote PC that only runs workers) finds nothing
+# here and reports its panes as 'discovered' — that is expected.
+STATE_ROOT=
 
 # Scan interval in seconds.
 INTERVAL=5

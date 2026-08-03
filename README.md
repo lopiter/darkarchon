@@ -472,19 +472,24 @@ Shells with different `DARKARCHON_TEAM` values land in different tmux sessions a
 ## State directory layout
 
 ```
-~/.darkarchon/<team>/
-├── workers-runtime.env       # registry of spawned/invited workers
-├── tasks.db                  # SQLite — every dispatch (status + result + history)
-├── mailboxes/<worker>.jsonl  # inter-worker messages
-├── questions/<id>.json       # worker→user clarifying questions
-├── heartbeats/<worker>.json  # per-worker liveness (5s update, pid + last_seen)
-├── mcp-config-<worker>.json  # generated per-spawn MCP server config
-├── agent.config              # hub URL, polling interval
-├── orchestrator.txt          # pane id of the session that spawned the team
-└── .registry.lock            # transient mkdir-lock for concurrent mutations
+~/.darkarchon/
+├── agent.config                  # hub URL + host id — per HOST, shared by all teams
+└── <team>/
+    ├── workers-runtime.env       # registry of spawned/invited workers
+    ├── tasks.db                  # SQLite — every dispatch (status + result + history)
+    ├── mailboxes/<worker>.jsonl  # inter-worker messages
+    ├── questions/<id>.json       # worker→user clarifying questions
+    ├── heartbeats/<worker>.json  # per-worker liveness (5s update, pid + last_seen)
+    ├── mcp-config-<worker>.json  # generated per-spawn MCP server config
+    ├── orchestrator.txt          # pane id of the session that spawned the team
+    └── .registry.lock            # transient mkdir-lock for concurrent mutations
 ```
 
-`tasks.db` is the source-of-truth — query via `lib/tasks.sh` or any SQLite client. The plain-file siblings let you inspect / delete with `cat` / `ls` when needed.
+`agent.config` sits one level up because the agent is per-host, not per-team: it
+scans every tmux pane on the machine and reports them under one `HOST_ID`. Run
+exactly one agent per host — `agent.sh start` refuses when another is alive.
+
+---
 
 ---
 
@@ -519,7 +524,9 @@ Defaults are fine on a single-LAN home network. The hub binds to `0.0.0.0` so ot
 |---|---|
 | `agent.sh start` | scans this machine's tmux + heartbeats, POSTs to the hub |
 
-`~/.darkarchon/<team>/agent.config` (auto-created on first start) needs `HUB_URL` pointing at the hub host's LAN IP — e.g. `HUB_URL=http://192.168.x.x:8774`. The hub never reaches back; the agent always initiates.
+`~/.darkarchon/agent.config` (auto-created on first start) needs `HUB_URL` pointing at the hub host's LAN IP — e.g. `HUB_URL=http://192.168.x.x:8774`. The hub never reaches back; the agent always initiates.
+
+One agent covers the whole machine, whatever `DARKARCHON_TEAM` the shell had — it scans all of tmux and sweeps every team under `~/.darkarchon/` for registry, heartbeat and hook state. Starting it again from a different team's shell is a no-op, not a second agent.
 
 ### What stays host-local (does NOT cross hosts)
 

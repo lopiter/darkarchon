@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Per-host agent: scan tmux for LLM CLIs and report to the hub.
 
+Host-scoped, not team-scoped: it scans every pane on the box (`tmux list-panes
+-a`) and reports them under one HOST_ID, so exactly one instance should run per
+host and its config lives at the state root rather than inside a team dir.
+
 Runs as a long-lived process. Usage:
 
     agent.py --hub-url http://main-pc:8774 --host-id $(hostname)
 
 Or via config file:
 
-    agent.py --config $STATE_DIR/agent.config
+    agent.py --config ~/.darkarchon/agent.config
 
 The config file is shell-style KEY=VALUE; see agent.config.example.
 """
@@ -33,11 +37,15 @@ from lib.heartbeat import annotate_workers  # noqa: E402
 from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
 
 
+_env_root = os.environ.get("DARKARCHON_STATE_ROOT")
+DEFAULT_STATE_ROOT = Path(_env_root).expanduser() if _env_root else Path.home() / ".darkarchon"
+
+
 @dataclass
 class AgentConfig:
     hub_url: str
     host_id: str
-    registry_path: Path
+    state_root: Path
     llm_processes: tuple[str, ...] = ("claude", "codex")
     llm_window_names: tuple[str, ...] = ("claude",)
     interval_seconds: float = 5.0
@@ -70,54 +78,59 @@ def _http_post_json(url: str, payload: dict, timeout: float = 3.0) -> int:
         return -1
 
 
-def _parse_all_registries(main_path: Path) -> dict:
-    """Merge main registry with sibling sub-directory registries (worktree teams).
+def _discover_state_dirs(root: Path) -> list[Path]:
+    """Every team state dir under `root`, oldest registry first.
 
-    Layout:
-      ~/.darkarchon/<team>/workers-runtime.env             <- main
-      ~/.darkarchon/<team>/<sub_a>/workers-runtime.env     <- worktree team
-      ~/.darkarchon/<team>/<sub_b>/workers-runtime.env     <- worktree team
+    Two layouts coexist and both must be found:
+      <root>/<team>/                       flat team (config.env's STATE_DIR)
+      <root>/<team>/<worktree>/            nested worktree team
 
-    Without this, agent would only resolve workers spawned in its own team
-    and the others would show up as 'discovered' with raw target names.
+    A directory counts as a team state dir when it holds workers-runtime.env;
+    the heartbeat and hook-state files the agent also reads live beside it.
+    Since the agent is host-scoped it has no team of its own — every team on the
+    box is equally its business, and scanning them from one place is what keeps
+    registry lookup and heartbeat lookup from drifting to different depths.
+
+    Ordered by registry mtime so `_merge_registries` lets the freshest write
+    win: the same tmux target can appear in two teams when an old entry was
+    never cleaned up, and the live registration is the one written last.
     """
-    # Build sub-registries first, then overlay the main one so the hub's
-    # own registry wins on key collision. Without this, a stale worktree
-    # entry with the same target as a freshly-invited main worker would
-    # shadow the new entry (last-wins iteration order).
-    sub_merged: dict = {}
-    parent = main_path.parent
-    if parent.is_dir():
-        for sub in parent.iterdir():
-            if not sub.is_dir():
+    if not root.is_dir():
+        return []
+    found: list[tuple[float, Path]] = []
+    try:
+        teams = sorted(root.iterdir())
+    except OSError:
+        return []
+    for team in teams:
+        if not team.is_dir():
+            continue
+        candidates = [team]
+        try:
+            candidates.extend(sub for sub in sorted(team.iterdir()) if sub.is_dir())
+        except OSError:
+            pass
+        for d in candidates:
+            try:
+                mtime = (d / "workers-runtime.env").stat().st_mtime
+            except OSError:
                 continue
-            sub_reg = sub / "workers-runtime.env"
-            if not sub_reg.exists():
-                continue
-            for k, v in parse_registry_file(sub_reg).items():
-                sub_merged[k] = v
-    main = parse_registry_file(main_path)
-    sub_merged.update(main)
-    return sub_merged
+            found.append((mtime, d))
+    found.sort(key=lambda pair: pair[0])
+    return [d for _, d in found]
 
 
-def _collect_state_dirs(main_path: Path) -> list[Path]:
-    """Main state dir + sibling worktree state dirs (anywhere we might
-    find a heartbeat file). Mirrors `_parse_all_registries` discovery."""
-    out: list[Path] = [main_path.parent]
-    parent = main_path.parent.parent
-    if parent.is_dir():
-        for sub in parent.iterdir():
-            if not sub.is_dir():
-                continue
-            if not (sub / "workers-runtime.env").exists():
-                continue
-            out.append(sub)
-    return out
+def _merge_registries(state_dirs: list[Path]) -> dict:
+    """Target-keyed registry entries from every team, later dirs winning."""
+    merged: dict = {}
+    for d in state_dirs:
+        merged.update(parse_registry_file(d / "workers-runtime.env"))
+    return merged
 
 
 def report_once(cfg: AgentConfig) -> int:
-    registry = _parse_all_registries(cfg.registry_path)
+    state_dirs = _discover_state_dirs(cfg.state_root)
+    registry = _merge_registries(state_dirs)
     # Feed the registry's recorded agent kind into the scanner so it routes each
     # registered worker to the right detector (codex vs claude) — authoritative
     # over process-name/TUI-glyph heuristics, which are fragile (e.g. nvm codex
@@ -129,7 +142,6 @@ def report_once(cfg: AgentConfig) -> int:
         known_kinds=known_kinds,
     )
     workers = resolve_workers(scanned, registry)
-    state_dirs = _collect_state_dirs(cfg.registry_path)
     # Overlay hook-reported state (event-accurate awaiting_user with the actual
     # permission message) on top of the TUI scrape for spawned Claude workers.
     # Workers without a hook file (invited/codex/legacy) pass through untouched.
@@ -144,7 +156,7 @@ def report_once(cfg: AgentConfig) -> int:
 def run_loop(cfg: AgentConfig):
     print(
         f"[agent] host_id={cfg.host_id} hub={cfg.hub_url} "
-        f"interval={cfg.interval_seconds}s registry={cfg.registry_path}"
+        f"interval={cfg.interval_seconds}s state_root={cfg.state_root}"
     )
     while True:
         try:
@@ -156,12 +168,10 @@ def run_loop(cfg: AgentConfig):
 
 def main():
     p = argparse.ArgumentParser()
-    _default_config_dir = os.environ.get("STATE_DIR")
-    _default_config = Path(_default_config_dir) / "agent.config" if _default_config_dir else None
-    p.add_argument("--config", type=Path, default=_default_config)
+    p.add_argument("--config", type=Path, default=DEFAULT_STATE_ROOT / "agent.config")
     p.add_argument("--hub-url", help="overrides config")
     p.add_argument("--host-id", help="overrides config (default: hostname)")
-    p.add_argument("--registry", type=Path, help="overrides config (path to workers-runtime.env)")
+    p.add_argument("--state-root", type=Path, help="overrides config (parent of the team state dirs)")
     p.add_argument("--interval", type=float, help="overrides config (seconds)")
     args = p.parse_args()
 
@@ -172,10 +182,14 @@ def main():
         print("ERROR: --hub-url or HUB_URL in config required", file=sys.stderr)
         sys.exit(1)
     host_id = args.host_id or file_cfg.get("HOST_ID") or socket.gethostname()
-    default_registry = file_cfg.get("REGISTRY_PATH")
-    if not default_registry and _default_config_dir:
-        default_registry = str(Path(_default_config_dir) / "workers-runtime.env")
-    registry = args.registry or (Path(default_registry) if default_registry else Path("/dev/null"))
+    if file_cfg.get("REGISTRY_PATH"):
+        print(
+            "[agent] warning: REGISTRY_PATH is no longer read — the agent scans "
+            "every team under STATE_ROOT. Remove it from the config.",
+            file=sys.stderr,
+        )
+    cfg_root = file_cfg.get("STATE_ROOT")
+    state_root = args.state_root or (Path(cfg_root).expanduser() if cfg_root else DEFAULT_STATE_ROOT)
     interval = args.interval if args.interval else float(file_cfg.get("INTERVAL", "5"))
     llm_processes = tuple((file_cfg.get("LLM_PROCESSES") or "claude,codex").split(","))
     llm_window_names = tuple((file_cfg.get("LLM_WINDOWS") or "claude").split(","))
@@ -183,7 +197,7 @@ def main():
     cfg = AgentConfig(
         hub_url=hub_url,
         host_id=host_id,
-        registry_path=registry,
+        state_root=state_root,
         interval_seconds=interval,
         llm_processes=tuple(p.strip() for p in llm_processes if p.strip()),
         llm_window_names=tuple(w.strip() for w in llm_window_names if w.strip()),

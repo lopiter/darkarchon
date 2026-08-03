@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 # agent.sh — start / stop / status the per-host agent.
 #
-# Reads config from $STATE_DIR/agent.config by default.
-# Multi-team aware: derives pidfile from SESSION_NAME so concurrent
-# worktree agents don't collide.
+# Reads config from $HOST_STATE_DIR/agent.config.
+#
+# One agent per host, NOT per team: it scans every tmux pane on the machine
+# (`tmux list-panes -a`) and POSTs them under a single HOST_ID. A second
+# instance would report the same panes to the same endpoint, so the pidfile is
+# host-level and start refuses when any agent process is already alive.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "$HERE/lib/_lib.sh"  # provides SESSION_NAME, STATE_DIR
-# Make STATE_DIR available to agent.py — it falls back to /dev/null otherwise,
-# which means the registry isn't picked up and workers show as 'discovered'.
-export STATE_DIR
+source "$HERE/lib/_lib.sh"  # provides HOST_STATE_DIR, AGENT_CONFIG, STATE_DIR
+# Tell agent.py which root to sweep for team state dirs, so a non-default
+# TOOL_PREFIX doesn't leave it scanning ~/.darkarchon.
+export DARKARCHON_STATE_ROOT="$HOST_STATE_DIR"
 
-PIDFILE="${TMPDIR:-/tmp}/${SESSION_NAME}-agent.pid"
-LOGFILE="${TMPDIR:-/tmp}/${SESSION_NAME}-agent.log"
-CONFIG="${STATE_DIR}/agent.config"
+PIDFILE="${TMPDIR:-/tmp}/${TOOL_PREFIX}-agent.pid"
+LOGFILE="${TMPDIR:-/tmp}/${TOOL_PREFIX}-agent.log"
+CONFIG="$AGENT_CONFIG"
+
+# Every live agent.py owned by this user, one pid per line. Catches instances
+# the pidfile lost track of — TMPDIR is periodically swept on macOS, and older
+# versions keyed the pidfile by team so each team's start created another one.
+_agent_pids() {
+    pgrep -u "$(id -u)" -f "$HERE/agent.py" 2>/dev/null || true
+}
 
 # Interactive config setup. Asks the user for missing required values when
 # stdin is a TTY. Skipped (with error) for non-interactive invocations like
@@ -88,10 +98,14 @@ cmd="${1:-status}"
 
 case "$cmd" in
     start)
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "[$SESSION_NAME] agent already running (pid $(cat "$PIDFILE"))"
+        running="$(_agent_pids)"
+        if [ -n "$running" ]; then
+            echo "agent already running on this host (pid $(echo "$running" | tr '\n' ' '))"
+            # Re-adopt so a later stop can reach it even if the pidfile was lost.
+            echo "$running" | head -1 > "$PIDFILE"
             exit 0
         fi
+        migrate_agent_config
         if [ ! -f "$CONFIG" ]; then
             _init_config_interactive
         else
@@ -101,7 +115,7 @@ case "$cmd" in
         echo $! > "$PIDFILE"
         sleep 0.5
         if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "started agent [$SESSION_NAME] (pid $(cat "$PIDFILE"))"
+            echo "started agent (pid $(cat "$PIDFILE"))"
             echo "log: $LOGFILE"
         else
             echo "failed to start. log:"
@@ -110,25 +124,34 @@ case "$cmd" in
         fi
         ;;
     stop)
-        if [ ! -f "$PIDFILE" ]; then
-            echo "[$SESSION_NAME] agent not running (no pidfile)"
+        # Stop every agent process, not just the pidfile's — untracked strays
+        # keep posting to the hub and are the whole reason we sweep by pgrep.
+        pids="$(_agent_pids)"
+        if [ -z "$pids" ]; then
+            echo "agent not running"
+            rm -f "$PIDFILE"
             exit 0
         fi
-        pid="$(cat "$PIDFILE")"
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid"
-            echo "stopped agent [$SESSION_NAME] (pid $pid)"
-        else
-            echo "[$SESSION_NAME] stale pidfile (pid $pid not alive)"
-        fi
+        for pid in $pids; do
+            if kill "$pid" 2>/dev/null; then
+                echo "stopped agent (pid $pid)"
+            else
+                echo "could not signal pid $pid" >&2
+            fi
+        done
         rm -f "$PIDFILE"
         ;;
     status)
-        echo "session:    $SESSION_NAME"
+        echo "state root: $HOST_STATE_DIR"
         echo "config:     $CONFIG"
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            echo "status:     running (pid $(cat "$PIDFILE"))"
+        pids="$(_agent_pids)"
+        if [ -n "$pids" ]; then
+            echo "status:     running (pid $(echo "$pids" | tr '\n' ' '))"
             echo "log:        $LOGFILE"
+            if [ "$(echo "$pids" | wc -l | tr -d ' ')" -gt 1 ]; then
+                echo "WARNING:    more than one agent is running on this host —" >&2
+                echo "            they overwrite each other's reports. Run '$0 stop' then start." >&2
+            fi
         else
             echo "status:     not running"
         fi

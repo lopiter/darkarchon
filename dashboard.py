@@ -40,6 +40,11 @@ def _task_store(state_dir: Path | None = None) -> TaskStore:
 
 # ─── Globals (overridable via CLI for multi-team support) ───────────────────
 STATE_DIR = Path(os.environ.get("STATE_DIR") or (Path.home() / ".team"))
+# Parent of every team's state dir. The hub serves the whole host, not just the
+# team it was launched from, so team discovery starts here rather than at
+# STATE_DIR. Overridden by --state-root; STATE_DIR.parent is only a fallback and
+# is wrong when the hub itself runs from a nested worktree state dir.
+STATE_ROOT = STATE_DIR.parent
 SESSION_NAME = "team"
 STORE: HostStateStore = HostStateStore(stale_after_seconds=30)
 BROKER = SseBroker()
@@ -140,28 +145,49 @@ def _team_for_session(session: str) -> str | None:
 
 
 def _all_state_dirs() -> list:
-    """Discover hub's own + worktree sibling state directories.
+    """Every team state dir on this host.
 
-    Layout:
-      ~/.darkarchon/<team>/                <-- hub's STATE_DIR (own)
-      ~/.darkarchon/<team>/<sub_a>/        <-- worktree (sub-dir)
-      ~/.darkarchon/<team>/<sub_b>/        <-- worktree
+    Layout, both of which occur:
+      <root>/<team>/                <-- flat team (config.env's STATE_DIR)
+      <root>/<team>/<sub>/          <-- worktree team nested under it
 
-    A sub-dir is treated as a worktree state dir only when it contains
-    workers-runtime.env. Its team name is derived as SESSION_NAME +
-    '-' + sub_dir_name to match the worktree's own SESSION_NAME.
+    A directory counts as a team state dir when it contains
+    workers-runtime.env. The hub's own STATE_DIR is always included, so a
+    freshly started hub still reports its own team before anything spawns.
+
+    Sweeping from STATE_ROOT rather than STATE_DIR is what lets the hub see
+    teams other than the one it was launched from: dashboard.sh starts it with
+    whatever DARKARCHON_TEAM the shell had, but the agent reports every pane on
+    the machine, so a hub anchored to one team could not name the rest.
+
+    Team names mirror the SESSION_NAME each team's own scripts resolve —
+    config.env sets STATE_DIR=<root>/<SESSION_NAME>, so a flat dir's name is its
+    team name, and a worktree sub-dir is '<team>-<sub>'.
 
     Returns: list of (state_dir_path, team_name).
     """
     out = [(STATE_DIR, SESSION_NAME)]
-    if STATE_DIR.is_dir():
-        for sub in sorted(STATE_DIR.iterdir()):
-            if not sub.is_dir():
+    seen = {STATE_DIR}
+    if not STATE_ROOT.is_dir():
+        return out
+    for team in sorted(STATE_ROOT.iterdir()):
+        if not team.is_dir():
+            continue
+        team_name = SESSION_NAME if team == STATE_DIR else team.name
+        if team not in seen and (team / "workers-runtime.env").exists():
+            out.append((team, team_name))
+            seen.add(team)
+        try:
+            subs = sorted(team.iterdir())
+        except OSError:
+            continue
+        for sub in subs:
+            if not sub.is_dir() or sub in seen:
                 continue
             if not (sub / "workers-runtime.env").exists():
                 continue
-            team_name = f"{SESSION_NAME}-{sub.name}"
-            out.append((sub, team_name))
+            out.append((sub, f"{team_name}-{sub.name}"))
+            seen.add(sub)
     return out
 
 
@@ -570,19 +596,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    global STATE_DIR, SESSION_NAME, STORE
+    global STATE_DIR, STATE_ROOT, SESSION_NAME, STORE
 
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--session-name", default=SESSION_NAME)
     p.add_argument("--state-dir", default=str(STATE_DIR))
+    p.add_argument(
+        "--state-root",
+        help="parent of the team state dirs (default: parent of --state-dir)",
+    )
     p.add_argument("--stale-after", type=float, default=30.0)
     p.add_argument("--evict-after", type=float, default=300.0)
     args = p.parse_args()
 
     SESSION_NAME = args.session_name
     STATE_DIR = Path(args.state_dir)
+    STATE_ROOT = Path(args.state_root) if args.state_root else STATE_DIR.parent
     STORE = HostStateStore(
         stale_after_seconds=args.stale_after,
         evict_after_seconds=args.evict_after,
@@ -590,6 +621,7 @@ def main():
 
     print(f"Team hub [{SESSION_NAME}] → http://{args.host}:{args.port}")
     print(f"State dir:        {STATE_DIR}")
+    print(f"State root:       {STATE_ROOT} ({len(_all_state_dirs())} teams)")
     print(f"Stale-after:      {args.stale_after}s")
     print(f"Evict-after:      {args.evict_after}s")
     print("Ctrl-C to stop.")
