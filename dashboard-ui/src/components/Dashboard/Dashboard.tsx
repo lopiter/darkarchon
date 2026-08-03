@@ -3,6 +3,7 @@ import { useDashboardStore } from '../../store/dashboard';
 import { isHostStale } from '../../utils/transform';
 import { EmptyState } from '../EmptyState/EmptyState';
 import { HostGroup } from '../HostGroup/HostGroup';
+import { InactiveTeams } from '../InactiveTeams/InactiveTeams';
 import { NotificationToggle } from '../NotificationToggle/NotificationToggle';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import styles from './Dashboard.module.css';
@@ -35,6 +36,7 @@ export function Dashboard() {
         className={`${styles.dashboard} ${panelOpen ? styles.panelOpen : ''}`}
       >
         {body}
+        <InactiveTeams />
       </main>
     </>
   );

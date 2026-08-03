@@ -137,6 +137,14 @@ $DARKARCHON_HOME/lib/stop.sh                   # kill the team's tmux session
 $DARKARCHON_HOME/lib/tasks.sh list | today | failed | show <id> | result <id>
 ```
 
+**Inspect / clean up teams:**
+```bash
+$DARKARCHON_HOME/lib/teams.sh list             # every team graded by last activity
+$DARKARCHON_HOME/lib/teams.sh archive <team>   # move an unused team's state dir aside
+```
+- Archiving moves to `~/.darkarchon-archive/<date>/`, never deletes, and refuses
+  any team whose tmux session is still alive.
+
 **Dashboard** (optional; one hub serves all teams):
 ```bash
 $DARKARCHON_HOME/dashboard.sh start        # JSON API hub

@@ -1,6 +1,14 @@
-import type { Host, Team, Worker, WorkerState } from '../types/domain';
+import type {
+  Host,
+  InactiveTeam,
+  Team,
+  TeamActivity,
+  Worker,
+  WorkerState,
+} from '../types/domain';
 import type {
   RawStatusResponse,
+  RawTeam,
   RawWorker,
   RawWorkerState,
 } from '../types/raw';
@@ -20,8 +28,42 @@ export const HOST_STALE_MS = 15_000;
  *     to `dead` so sort/visuals match design intent without needing
  *     hostStale-aware sort logic.
  */
+function toActivity(t: RawTeam): TeamActivity {
+  return {
+    tier: t.tier,
+    idleSeconds: t.idle_seconds,
+    source: t.last_activity_source,
+    registeredWorkers: t.workers,
+    sizeBytes: t.size_bytes,
+  };
+}
+
+/**
+ * Teams the hub knows about that have no worker reporting right now.
+ *
+ * These are invisible in the host→team→worker tree by construction: it is built
+ * from `raw.workers`, so a team nobody is running simply has no rows. That is
+ * exactly the set worth showing as cleanup candidates, so it is derived
+ * separately rather than folded into the tree.
+ *
+ * Sorted longest-idle first; teams with no activity signal at all sort last.
+ */
+export function inactiveTeams(raw: RawStatusResponse): InactiveTeam[] {
+  if (!raw.teams) return [];
+  const active = new Set(
+    raw.workers.map((w) => displayTeam(w.team_name))
+  );
+  return raw.teams
+    .filter((t) => !active.has(displayTeam(t.name)))
+    .map((t) => ({ name: t.name, stateDir: t.state_dir, ...toActivity(t) }))
+    .sort((a, b) => (b.idleSeconds ?? -1) - (a.idleSeconds ?? -1));
+}
+
 export function transformRawStatus(raw: RawStatusResponse): Host[] {
   const refTs = new Date(raw.ts).getTime();
+  const activityByTeam = new Map(
+    (raw.teams ?? []).map((t) => [displayTeam(t.name), toActivity(t)])
+  );
   type Bucket = { teams: Map<string, Worker[]>; lastSeenMs: number };
   const byHost: Map<string, Bucket> = new Map();
 
@@ -53,6 +95,7 @@ export function transformRawStatus(raw: RawStatusResponse): Host[] {
       teams: Array.from(bucket.teams.entries()).map(
         ([name, workers]): Team => ({
           name,
+          activity: activityByTeam.get(name),
           workers: stale
             ? workers.map((w) => ({ ...w, state: 'dead' as WorkerState }))
             : workers,

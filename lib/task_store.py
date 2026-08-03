@@ -263,6 +263,42 @@ class TaskStore:
             streak += 1
         return streak
 
+    def dispatch_pairs(self, limit: int = 20000) -> list[dict]:
+        """Distinct (sender, target, recipient) triples, most recent first.
+
+        Feeds the dashboard's orchestrator index, which only needs to know which
+        pane dispatched into which team — not the task bodies. Grouping down to
+        three columns keeps prompt/result blobs out of the read entirely; on a
+        busy team that is the difference between a few hundred rows and ten
+        thousand fat ones.
+
+        `last_at` is each triple's newest dispatch, and rows come back newest
+        first, so a consumer that keeps the first entry per sender is tagging
+        that pane by its most recent destination.
+        """
+        sql = (
+            "SELECT dispatched_by, tmux_target, worker, MAX(dispatched_at) AS last_at "
+            "FROM tasks "
+            "WHERE dispatched_by IS NOT NULL AND dispatched_by != '' "
+            "AND tmux_target IS NOT NULL AND tmux_target != '' "
+            "GROUP BY dispatched_by, tmux_target, worker "
+            "ORDER BY last_at DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
+
+    def last_activity_any(self) -> str | None:
+        """Newest timestamp across every task, regardless of worker.
+
+        Team-level counterpart to `last_activity_at`; one of the signals the
+        dashboard's team index maxes over to age a team.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(COALESCE(completed_at, started_at, dispatched_at)) AS ts FROM tasks"
+            ).fetchone()
+            return row['ts'] if row and row['ts'] else None
+
     def last_activity_at(self, worker: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute(

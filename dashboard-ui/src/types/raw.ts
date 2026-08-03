@@ -81,10 +81,33 @@ export interface RawWorker {
   recent_output?: string[];
 }
 
+/** How long a team has gone without any activity. See lib/team_index.py. */
+export type RawTeamTier = 'live' | 'recent' | 'dormant' | 'stale' | 'empty';
+
+/**
+ * One row of the hub's team index — every team state dir on the host, not just
+ * the ones with workers reporting right now. A team with no live workers still
+ * appears here, which is what makes cleanup candidates visible at all.
+ */
+export interface RawTeam {
+  name: string;
+  state_dir: string;
+  /** Registered workers in workers-runtime.env (not necessarily running). */
+  workers: number;
+  last_activity_at: string | null;
+  /** Which signal was newest: 'dispatch' | 'heartbeat' | 'registry' | 'mailbox' */
+  last_activity_source: string | null;
+  idle_seconds: number | null;
+  tier: RawTeamTier;
+  size_bytes: number;
+}
+
 export interface RawStatusResponse {
   session_name: string;
   state_dir: string;
   workers: RawWorker[];
+  /** Optional — hubs predating the team index omit it. */
+  teams?: RawTeam[];
   /** ISO timestamp — reference time for host-stale calculations */
   ts: string;
 }

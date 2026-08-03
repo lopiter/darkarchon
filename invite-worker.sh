@@ -152,6 +152,18 @@ else
     KIND=claude; DETECT_NOTE="unsure-default-claude"
 fi
 
+# Lock the window name, exactly as spawn-worker.sh does for panes it creates.
+# Without this an invited pane resolves fine at first and then quietly stops:
+# tmux's automatic-rename follows pane_current_command, so claude's runtime
+# version string ("2.1.220") eventually replaces whatever the window was called
+# and the registry's `session:window-name` target no longer matches anything.
+tmux set-window-option -t "$TARGET" automatic-rename off >/dev/null 2>&1 || true
+tmux set-window-option -t "$TARGET" allow-rename off >/dev/null 2>&1 || true
+
+# tmux's immutable handle for this window — survives renames outright, so the
+# resolver has something to match on even if the locks above are undone.
+WINDOW_ID="$(tmux display-message -p -t "$TARGET" '#{window_id}' 2>/dev/null || true)"
+
 # Register in runtime — single lock covers both registry append and the
 # orchestrator marker write so a concurrent spawn/kill can't interleave.
 SAFE="$(safe_name "$NAME")"
@@ -162,6 +174,9 @@ _persist_invite_registration() {
         echo "# invited $(date -u +%FT%TZ)  name=$NAME  source=$TARGET  kind=$KIND ($DETECT_NOTE)"
         printf 'WORKER_%s_NAME=%q\n'     "$SAFE" "$NAME"
         printf 'WORKER_%s_TARGET=%q\n'   "$SAFE" "$TARGET"
+        if [ -n "$WINDOW_ID" ]; then
+            printf 'WORKER_%s_WINDOW_ID=%q\n' "$SAFE" "$WINDOW_ID"
+        fi
         printf 'WORKER_%s_DIR=%q\n'      "$SAFE" "$CWD"
         printf 'WORKER_%s_ROLE=%q\n'     "$SAFE" "$ROLE"
         printf 'WORKER_%s_KIND=%q\n'     "$SAFE" "$KIND"

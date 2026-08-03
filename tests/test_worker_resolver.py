@@ -159,3 +159,71 @@ def test_resolve_workers_matches_by_window_name_when_registry_uses_window_name()
     assert workers[0]["name"] == "backend"
     assert workers[0]["role"] == "backend-role"
     assert workers[0]["kind"] == "registered"
+
+
+def _pane(**overrides):
+    return {
+        "target": "myteam:2.1",
+        "process": "claude",
+        "cwd": "/x",
+        "pane_pid": "1",
+        "window_name": "backend",
+        "window_id": "@7",
+        "state": "idle",
+        "detail": "",
+        **overrides,
+    }
+
+
+def test_window_id_resolves_a_renamed_window():
+    """The failure this exists to fix: tmux's automatic-rename replaces the
+    window name with claude's version string, so `session:window-name` stops
+    matching and a live worker silently reports as 'discovered'."""
+    registry = parse_registry_text(
+        "WORKER_backend_NAME=backend\n"
+        "WORKER_backend_TARGET=myteam:backend\n"
+        "WORKER_backend_ROLE=backend-role\n"
+        "WORKER_backend_WINDOW_ID=@7\n"
+    )
+
+    workers = resolve_workers([_pane(window_name="2.1.220")], registry)
+
+    assert workers[0]["name"] == "backend"
+    assert workers[0]["kind"] == "registered"
+
+
+def test_window_id_from_another_session_is_not_trusted():
+    """tmux reassigns ids from @0 after a server restart, so an id alone could
+    collide with an unrelated window. The registered session must agree."""
+    registry = parse_registry_text(
+        "WORKER_backend_NAME=backend\n"
+        "WORKER_backend_TARGET=otherteam:backend\n"
+        "WORKER_backend_WINDOW_ID=@7\n"
+    )
+
+    workers = resolve_workers([_pane(window_name="2.1.220")], registry)
+
+    assert workers[0]["kind"] == "discovered"
+
+
+def test_name_matching_still_works_without_a_window_id():
+    """Entries registered before WINDOW_ID existed must keep resolving."""
+    registry = parse_registry_text(
+        "WORKER_backend_NAME=backend\n"
+        "WORKER_backend_TARGET=myteam:backend\n"
+    )
+
+    workers = resolve_workers([_pane(window_id="")], registry)
+
+    assert workers[0]["name"] == "backend"
+
+
+def test_registry_is_keyed_by_both_target_and_window_id():
+    registry = parse_registry_text(
+        "WORKER_backend_NAME=backend\n"
+        "WORKER_backend_TARGET=myteam:backend\n"
+        "WORKER_backend_WINDOW_ID=@7\n"
+    )
+
+    assert registry["@7"] is registry["myteam:backend"]
+    assert registry["@7"]["window_id"] == "@7"

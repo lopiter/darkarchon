@@ -14,14 +14,13 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "$HERE/lib/_lib.sh"  # provides SESSION_NAME, STATE_DIR
+source "$HERE/lib/_lib.sh"  # provides SESSION_NAME, STATE_DIR, AGENT_CONFIG
 
 UI_DIR="$HERE/dashboard-ui"
 VITE_PORT=5173
 PIDFILE="${TMPDIR:-/tmp}/${SESSION_NAME}-dashboard-ui.pid"
 LOGFILE="${TMPDIR:-/tmp}/${SESSION_NAME}-dashboard-ui.log"
 VITE_CONFIG="$UI_DIR/vite.config.ts"
-AGENT_CONFIG="$STATE_DIR/agent.config"
 
 sync_vite_proxy_to_hub() {
     # Look up current hub port from agent.config (HUB_URL=http://127.0.0.1:PORT).

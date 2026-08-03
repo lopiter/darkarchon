@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import type { Host, Worker } from '../types/domain';
+import type { Host, InactiveTeam, Worker } from '../types/domain';
 import type { RawStatusResponse } from '../types/raw';
 import { sortWorkersForTeam } from '../utils/sortWorkers';
-import { transformRawStatus } from '../utils/transform';
+import { inactiveTeams, transformRawStatus } from '../utils/transform';
 import { isHidden } from '../utils/visibility';
 
 /**
@@ -39,6 +39,9 @@ export interface PulseEntry {
 
 interface DashboardStore {
   hosts: Host[];
+  /** Teams the hub knows about with nothing running — cleanup candidates.
+   *  Not part of `hosts` because that tree is built from reporting workers. */
+  inactiveTeams: InactiveTeam[];
   /** hostId → expanded flag for the 'N hidden' dead bucket */
   hiddenExpanded: Record<string, boolean>;
 
@@ -90,6 +93,7 @@ let pulseSeq = 0;
 
 export const useDashboardStore = create<DashboardStore>((set, get) => ({
   hosts: [],
+  inactiveTeams: [],
   hiddenExpanded: {},
   pulseUntil: new Map(),
   newUntil: new Map(),
@@ -106,7 +110,8 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
     set({ view });
   },
 
-  setRawStatus: (raw) => set({ hosts: transformRawStatus(raw) }),
+  setRawStatus: (raw) =>
+    set({ hosts: transformRawStatus(raw), inactiveTeams: inactiveTeams(raw) }),
   setHosts: (hosts) => set({ hosts }),
 
   toggleHidden: (hostId) =>

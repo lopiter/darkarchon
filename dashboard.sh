@@ -38,6 +38,9 @@ case "$cmd" in
                 --host 0.0.0.0 \
                 --session-name "$SESSION_NAME" \
                 --state-dir "$STATE_DIR" \
+                --state-root "$HOST_STATE_DIR" \
+                --dormant-days "$TEAM_DORMANT_DAYS" \
+                --stale-days "$TEAM_STALE_DAYS" \
                 >"$LOGFILE" 2>&1 &
             echo $! > "$PIDFILE"
             sleep 0.5
@@ -52,7 +55,9 @@ case "$cmd" in
         fi
 
         # ── Local agent (auto-create or sync config) ───────────────
-        AGENT_CONFIG="${STATE_DIR}/agent.config"
+        # AGENT_CONFIG comes from lib/_lib.sh and is host-level, shared by
+        # every team on this machine.
+        migrate_agent_config
         if [ ! -f "$AGENT_CONFIG" ]; then
             mkdir -p "$(dirname "$AGENT_CONFIG")"
             cat > "$AGENT_CONFIG" <<EOF

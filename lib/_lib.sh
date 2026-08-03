@@ -28,7 +28,38 @@ fi
 
 # Export the resolved paths so python children (task_store.py, worker_state.py)
 # read the same STATE_DIR without each reconstructing it from DARKARCHON_TEAM.
-export STATE_DIR TOOL_PREFIX
+# HOST_STATE_DIR is the team dirs' parent and stays put even when EE_STATE_DIR
+# repoints STATE_DIR at a nested worktree team.
+export STATE_DIR TOOL_PREFIX HOST_STATE_DIR
+
+# Per-host agent settings (hub URL, host id). Host-level, not team-level: the
+# agent scans every tmux pane on the machine and reports them under a single
+# HOST_ID, so one config and one running agent serve every team.
+AGENT_CONFIG="$HOST_STATE_DIR/agent.config"
+
+# migrate_agent_config — move a pre-existing team-level agent.config up to the
+# host-level path. It used to be written to $STATE_DIR, so which team dir it
+# landed in was decided by whatever DARKARCHON_TEAM the shell had on first
+# start. Adopts the most recently modified copy and reports (without deleting)
+# any others, which are now dead files.
+migrate_agent_config() {
+    [ -f "$AGENT_CONFIG" ] && return 0
+    local newest="" f
+    for f in "$HOST_STATE_DIR"/*/agent.config; do
+        [ -f "$f" ] || continue
+        if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+            newest="$f"
+        fi
+    done
+    [ -n "$newest" ] || return 0
+    mkdir -p "$HOST_STATE_DIR"
+    mv "$newest" "$AGENT_CONFIG"
+    echo "migrated agent.config: $newest -> $AGENT_CONFIG"
+    for f in "$HOST_STATE_DIR"/*/agent.config; do
+        [ -f "$f" ] || continue
+        echo "note: $f is no longer read (leftover team-level copy; safe to delete)"
+    done
+}
 
 # Optional runtime worker registry (written by spawn-worker.sh, removed by kill-worker.sh)
 RUNTIME_REGISTRY="$STATE_DIR/workers-runtime.env"
