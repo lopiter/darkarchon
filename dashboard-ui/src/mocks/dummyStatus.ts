@@ -14,6 +14,8 @@ import type { RawStatusResponse } from '../types/raw';
  *   - dispatch out (myteam orch), dispatch in (voc backend)
  *   - pending mailbox (frontend)
  *   - Tier 2 detail variants
+ *   - team index: teams with workers reporting (age badge) plus teams with
+ *     none, which is what the inactive-teams section renders
  */
 
 const REF_TS = '2026-05-23T15:00:00Z';
@@ -292,5 +294,31 @@ export const dummyStatus: RawStatusResponse = {
       team_name: 'smoketest',
       is_orchestrator: false,
     },
+  ],
+  teams: [
+    // Teams with workers above — these only annotate the existing group labels.
+    { name: 'myteam', state_dir: '/Users/u/.darkarchon/myteam', workers: 4,
+      last_activity_at: secAgoIso(30), last_activity_source: 'heartbeat',
+      idle_seconds: 30, tier: 'live', size_bytes: 620_000 },
+    { name: 'myteam-feature_a', state_dir: '/Users/u/.darkarchon/myteam/feature_a',
+      workers: 2, last_activity_at: secAgoIso(3 * 86400),
+      last_activity_source: 'dispatch', idle_seconds: 3 * 86400,
+      tier: 'recent', size_bytes: 84_000 },
+    { name: 'voc', state_dir: '/Users/u/.darkarchon/voc', workers: 2,
+      last_activity_at: secAgoIso(9 * 86400), last_activity_source: 'mailbox',
+      idle_seconds: 9 * 86400, tier: 'dormant', size_bytes: 190_000 },
+    { name: 'smoketest', state_dir: '/Users/u/.darkarchon/smoketest', workers: 1,
+      last_activity_at: secAgoIso(120), last_activity_source: 'registry',
+      idle_seconds: 120, tier: 'live', size_bytes: 2_000 },
+    // No worker reports these — the inactive-teams section is built from them.
+    { name: 'refactor-api', state_dir: '/Users/u/.darkarchon/refactor-api', workers: 4,
+      last_activity_at: secAgoIso(44 * 86400), last_activity_source: 'dispatch',
+      idle_seconds: 44 * 86400, tier: 'stale', size_bytes: 89_000 },
+    { name: 'perf', state_dir: '/Users/u/.darkarchon/perf', workers: 2,
+      last_activity_at: secAgoIso(11 * 86400), last_activity_source: 'dispatch',
+      idle_seconds: 11 * 86400, tier: 'dormant', size_bytes: 57_000 },
+    { name: 'old-fleet', state_dir: '/Users/u/.darkarchon/old-fleet', workers: 0,
+      last_activity_at: null, last_activity_source: null,
+      idle_seconds: null, tier: 'empty', size_bytes: 61_000 },
   ],
 };

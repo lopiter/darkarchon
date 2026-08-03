@@ -3,12 +3,37 @@
 }
 
 .label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   text-transform: uppercase;
   letter-spacing: 1.2px;
   font-size: var(--size-team-label);
   font-weight: 500;
   color: var(--text-tertiary);
   margin-bottom: var(--space-team-to-card);
+}
+
+/* Idle age sits beside the team name, deliberately quieter than it: this is
+   context for a team you can already see, not an alert. */
+.badge {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+.recent {
+  opacity: 0.5;
+}
+
+.dormant {
+  opacity: 0.75;
+}
+
+.stale,
+.empty {
+  opacity: 0.9;
 }
 
 .cards {

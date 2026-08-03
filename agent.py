@@ -33,6 +33,7 @@ sys.path.insert(0, str(HERE))
 
 from lib.tmux_scanner import scan_panes  # noqa: E402
 from lib.worker_resolver import parse_registry_file, resolve_workers  # noqa: E402
+from lib.team_index import discover_teams  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
 from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
 
@@ -81,43 +82,16 @@ def _http_post_json(url: str, payload: dict, timeout: float = 3.0) -> int:
 def _discover_state_dirs(root: Path) -> list[Path]:
     """Every team state dir under `root`, oldest registry first.
 
-    Two layouts coexist and both must be found:
-      <root>/<team>/                       flat team (config.env's STATE_DIR)
-      <root>/<team>/<worktree>/            nested worktree team
-
-    A directory counts as a team state dir when it holds workers-runtime.env;
-    the heartbeat and hook-state files the agent also reads live beside it.
     Since the agent is host-scoped it has no team of its own — every team on the
-    box is equally its business, and scanning them from one place is what keeps
-    registry lookup and heartbeat lookup from drifting to different depths.
+    box is equally its business, and taking registry lookup and heartbeat lookup
+    from one list is what keeps them from drifting to different depths.
 
-    Ordered by registry mtime so `_merge_registries` lets the freshest write
-    win: the same tmux target can appear in two teams when an old entry was
-    never cleaned up, and the live registration is the one written last.
+    mtime order lets `_merge_registries` resolve a collision in favour of the
+    freshest write: the same tmux target can appear in two teams when an old
+    entry was never cleaned up, and the live registration is the one written
+    last.
     """
-    if not root.is_dir():
-        return []
-    found: list[tuple[float, Path]] = []
-    try:
-        teams = sorted(root.iterdir())
-    except OSError:
-        return []
-    for team in teams:
-        if not team.is_dir():
-            continue
-        candidates = [team]
-        try:
-            candidates.extend(sub for sub in sorted(team.iterdir()) if sub.is_dir())
-        except OSError:
-            pass
-        for d in candidates:
-            try:
-                mtime = (d / "workers-runtime.env").stat().st_mtime
-            except OSError:
-                continue
-            found.append((mtime, d))
-    found.sort(key=lambda pair: pair[0])
-    return [d for _, d in found]
+    return [d for d, _name in discover_teams(root, order="mtime")]
 
 
 def _merge_registries(state_dirs: list[Path]) -> dict:

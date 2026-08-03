@@ -180,6 +180,7 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **dispatch** — writes a task row to `tasks.db`, sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
+- **team index** (`lib/team_index.py`) — discovers every team state dir on the host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Shared by the hub, the agent, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
 - **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex.
 - **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
 
@@ -362,6 +363,7 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `lib/start.sh` | Start every worker in `WORKERS=()` (config.env) |
 | `lib/stop.sh` | Kill the team's tmux session |
 | `lib/tasks.sh list \| today \| failed \| show <id> \| result <id>` | Inspect task history |
+| `lib/teams.sh list \| archive <team> \| archive --stale` | Grade every team by last activity; archive the unused ones (moves, never deletes) |
 | `check-worker-state.sh <name>` | One-line state report — for orchestrators deciding whether to dispatch |
 | `questions.sh list \| show <id> \| answer <id> "<text>"` | Read & answer worker-filed questions (`WAIT?` marks a blocked asker) |
 | `lib/mailbox.sh outstanding <worker> \| renotify <worker>` | Find messages a worker never drained, and re-trigger it |
@@ -455,8 +457,12 @@ Everything lives in `config.env` and is overridable by environment:
 | `DEPS_WAIT_SEC` | `3600` | How long `--after` waits for its dependencies |
 | `MAILBOX_OUTSTANDING_SEC` | `300` | Age at which an undrained message is reported by `mailbox.sh outstanding` |
 | `ASK_TIMEOUT_SEC` | `1800` | Default wait for a blocking `ask` |
+| `TEAM_DORMANT_DAYS` | `7` | Days of inactivity before a team is graded `dormant` |
+| `TEAM_STALE_DAYS` | `30` | Days of inactivity before a team is graded `stale` |
 
 `TASK_TIMEOUT` still appears in `config.env` but nothing reads it — `TASK_MAX_SECONDS` replaced it.
+
+The two `TEAM_*_DAYS` values only classify — nothing is ever deleted on their account. They feed the dashboard's age badges and pick the default set for `teams.sh archive --stale`; see [Team lifecycle](#team-lifecycle). Lower them if you spin up short-lived worktree teams and want the clutter surfaced sooner.
 
 Per-shell isolation (recommended via [direnv](https://direnv.net/)):
 
@@ -490,6 +496,56 @@ scans every tmux pane on the machine and reports them under one `HOST_ID`. Run
 exactly one agent per host — `agent.sh start` refuses when another is alive.
 
 ---
+
+## Team lifecycle
+
+State dirs accumulate. Every worktree, every experiment, every one-off team leaves one behind, and nothing removes them — a year in, `~/.darkarchon/` holds dozens of directories and no record of which still matter.
+
+Rather than guess at "dead", darkarchon reports **when a team was last active and which signal says so**, and leaves the call to you.
+
+Last activity is the newest of four traces the tooling already leaves:
+
+| Signal | Means |
+|---|---|
+| `dispatch` | newest row in `tasks.db` |
+| `heartbeat` | a worker was running (`heartbeats/*.json`) |
+| `registry` | a spawn / kill / invite changed `workers-runtime.env` |
+| `mailbox` | a worker-to-worker message was written or drained |
+
+The winning signal is reported alongside the age, because "quiet for 40 days since its last dispatch" and "registered last week, never given work" are different situations that a bare timestamp collapses together.
+
+Teams are then graded — `live` (a worker is running now) → `recent` → `dormant` → `stale`, using the `TEAM_*_DAYS` thresholds above. `empty` is separate: no registered workers at all, meaning it was torn down cleanly rather than abandoned.
+
+```bash
+lib/teams.sh list                      # grade every team
+lib/teams.sh list --json               # same, machine-readable
+lib/teams.sh archive <team> [<team>…]  # move specific teams aside
+lib/teams.sh archive --stale           # move everything graded 'stale'
+lib/teams.sh archive --stale --yes     # skip the confirmation prompt
+```
+
+```
+TEAM                         TIER       IDLE LAST SIGNAL  WORKERS   SIZE
+small-star                   live         0m heartbeat          2   576K
+aff                          recent       2d registry           5   213K
+secu                         dormant     11d dispatch          29   856K
+perf                         stale       49d dispatch           2    57K
+
+  dormant=12  empty=1  live=1  recent=10  stale=5
+  thresholds: dormant >7d, stale >30d
+```
+
+**Archiving moves, it never deletes.** A team goes to `~/.darkarchon-archive/<date>/<team>/` with its `tasks.db` history intact; restore it by moving the directory back. Three refusals protect you, and a refusal skips that team rather than aborting the batch:
+
+- a team whose tmux session is still alive
+- the team your current shell belongs to (`DARKARCHON_TEAM`)
+- a destination that already exists
+
+Archiving is CLI-only on purpose. The hub exposes the index read-only at `/api/teams` (and inside `/api/status`), so nothing reachable over the network can move a team's history.
+
+In the dashboard, a team that has gone quiet carries its age beside the name, and teams with nothing running collapse into an `inactive teams (N)` row at the bottom rather than crowding the ones you're working in.
+
+`tasks.db` is the source-of-truth — query via `lib/tasks.sh` or any SQLite client. The plain-file siblings let you inspect / delete with `cat` / `ls` when needed.
 
 ---
 

@@ -6,7 +6,7 @@
  * events in Phase 2 (or `applyQuestionOverlay` in Phase 1 mocks).
  */
 
-import type { RawDispatchEntry, RawTask } from './raw';
+import type { RawDispatchEntry, RawTask, RawTeamTier } from './raw';
 
 export type WorkerState =
   | 'idle'
@@ -64,6 +64,26 @@ export interface Team {
   /** Uppercase label, e.g. 'MYTEAM' */
   name: string;
   workers: Worker[];
+  /** Aging metadata from the hub's team index. Absent when the hub predates
+   *  it, or for synthetic buckets like '(unknown)' that match no state dir. */
+  activity?: TeamActivity;
+}
+
+/** Aging summary for one team, from `/api/status`'s `teams` array. */
+export interface TeamActivity {
+  tier: RawTeamTier;
+  idleSeconds: number | null;
+  /** 'dispatch' | 'heartbeat' | 'registry' | 'mailbox' — which signal was
+   *  newest. Distinguishes "went quiet after working" from "never worked". */
+  source: string | null;
+  registeredWorkers: number;
+  sizeBytes: number;
+}
+
+/** A team with no workers currently reporting — cleanup candidate. */
+export interface InactiveTeam extends TeamActivity {
+  name: string;
+  stateDir: string;
 }
 
 export interface Host {

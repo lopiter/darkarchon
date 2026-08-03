@@ -39,6 +39,8 @@ case "$cmd" in
                 --session-name "$SESSION_NAME" \
                 --state-dir "$STATE_DIR" \
                 --state-root "$HOST_STATE_DIR" \
+                --dormant-days "$TEAM_DORMANT_DAYS" \
+                --stale-days "$TEAM_STALE_DAYS" \
                 >"$LOGFILE" 2>&1 &
             echo $! > "$PIDFILE"
             sleep 0.5

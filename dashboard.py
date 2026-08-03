@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))  # allow `from lib.xxx import ...`
 from lib.hub_store import HostStateStore  # noqa: E402
 from lib.sse import SseBroker  # noqa: E402
 from lib.task_store import TaskStore  # noqa: E402
+from lib.team_index import build_index, discover_teams  # noqa: E402
 
 # Cache TaskStore instances by db path — sqlite connections are short-lived
 # per query but the schema-init is idempotent, so reusing the wrapper avoids
@@ -128,19 +129,71 @@ def humanize_age(iso_ts: str | None) -> str:
 
 ACTIVE_DISPATCH_MAX_AGE_SEC = 300  # tasks older than this are treated as stale and ignored
 
+# Aging thresholds, overridden from config.env via --dormant-days/--stale-days.
+TEAM_DORMANT_DAYS = 7
+TEAM_STALE_DAYS = 30
 
-def _team_for_session(session: str) -> str | None:
+# The team index walks every team's files (~50ms for 30 teams), far too slow to
+# repeat on each poll. Team aging moves on a scale of days, so serving it from a
+# short cache costs nothing in accuracy. Liveness is NOT cached — it is overlaid
+# per request from the host reports, which do change second to second.
+TEAM_INDEX_TTL_SEC = 30
+_team_index_cache: tuple[float, list] | None = None
+
+
+def _team_rows() -> list:
+    """Disk-derived team index, refreshed at most once per TEAM_INDEX_TTL_SEC."""
+    global _team_index_cache
+    now = time.monotonic()
+    if _team_index_cache and now - _team_index_cache[0] < TEAM_INDEX_TTL_SEC:
+        return _team_index_cache[1]
+    rows = build_index(
+        STATE_ROOT,
+        teams=_all_state_dirs(),
+        dormant_days=TEAM_DORMANT_DAYS,
+        stale_days=TEAM_STALE_DAYS,
+    )
+    _team_index_cache = (now, rows)
+    return rows
+
+
+def _teams_payload(live_teams: set) -> list:
+    """Team index with liveness from this request's host reports layered on.
+
+    Host reports can only ever promote a team to 'live'. An absent report is not
+    evidence of the opposite — /api/teams passes an empty set, and a heartbeat
+    is itself proof a worker is running — so a row the index already graded live
+    keeps that grade and simply ages out on the next cache refresh.
+    """
+    return [
+        {**row, "tier": "live"} if row["name"] in live_teams else dict(row)
+        for row in _team_rows()
+    ]
+
+
+def _team_names(state_dirs: list | None = None) -> set:
+    """Set of known team names. Pass `state_dirs` inside a loop to avoid
+    re-walking the state root once per iteration."""
+    return {team for _d, team in (state_dirs if state_dirs is not None else _all_state_dirs())}
+
+
+def _team_for_session(session: str, known: set | None = None) -> str | None:
     """Return the team name whose SESSION_NAME equals `session`, or None.
 
     This is the most accurate signal of team membership — a worker's tmux
     session directly tells us which hub team it belongs to. Used to break
     ties when the same worker name exists in multiple worktree registries.
+
+    `known` lets a caller in a hot loop pass a precomputed name set; without it
+    every call re-walks the state root.
     """
     if not session:
         return None
-    for _state_dir, team_name in _all_state_dirs():
-        if session == team_name:
-            return team_name
+    if known is None:
+        known = _team_names()
+    if session in known:
+        return session
+    return None
     return None
 
 
@@ -168,26 +221,15 @@ def _all_state_dirs() -> list:
     """
     out = [(STATE_DIR, SESSION_NAME)]
     seen = {STATE_DIR}
-    if not STATE_ROOT.is_dir():
-        return out
-    for team in sorted(STATE_ROOT.iterdir()):
-        if not team.is_dir():
+    for state_dir, name in discover_teams(STATE_ROOT):
+        if state_dir in seen:
             continue
-        team_name = SESSION_NAME if team == STATE_DIR else team.name
-        if team not in seen and (team / "workers-runtime.env").exists():
-            out.append((team, team_name))
-            seen.add(team)
-        try:
-            subs = sorted(team.iterdir())
-        except OSError:
-            continue
-        for sub in subs:
-            if not sub.is_dir() or sub in seen:
-                continue
-            if not (sub / "workers-runtime.env").exists():
-                continue
-            out.append((sub, f"{team_name}-{sub.name}"))
-            seen.add(sub)
+        # The hub's own dir keeps the --session-name it was started with, and
+        # anything nested under it inherits that rather than the folder name.
+        if state_dir.parent == STATE_DIR:
+            name = f"{SESSION_NAME}-{state_dir.name}"
+        out.append((state_dir, name))
+        seen.add(state_dir)
     return out
 
 
@@ -392,11 +434,18 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
       - if recipient is a registered worker → that worker's team (from the
         registry of whichever team dir the worker lives in)
       - otherwise → recipient's tmux session
+
+    Two signals feed this, and they are kept apart so the result doesn't depend
+    on directory iteration order: `orchestrator.txt` is an explicit marker the
+    spawner wrote, dispatch history is inferred, and explicit wins.
     """
     if registered_by_team is None:
         registered_by_team = _registered_workers_by_team()
-    pane_to_team: dict[str, str] = {}
-    for state_dir, team_name in _all_state_dirs():
+    from_marker: dict[str, str] = {}
+    from_dispatch: dict[str, str] = {}
+    state_dirs = _all_state_dirs()
+    known_teams = _team_names(state_dirs)
+    for state_dir, team_name in state_dirs:
         # Explicit marker: spawn-worker.sh / invite-worker.sh record the
         # caller pane here. Lets us identify the orchestrator without
         # needing any historical dispatch.
@@ -407,12 +456,12 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
             except Exception:
                 pane = ""
             if pane:
-                pane_to_team[pane] = team_name
+                from_marker[pane] = team_name
 
         db_path = state_dir / "tasks.db"
         if not db_path.exists():
             continue
-        for d in _task_store(state_dir).list(limit=10000):
+        for d in _task_store(state_dir).dispatch_pairs():
             sender = d.get("dispatched_by")
             target = d.get("tmux_target") or ""
             recipient = d.get("worker")
@@ -424,7 +473,7 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
             # worktree dir holds a stale entry for the same recipient name
             # (last-wins iteration order in registered_by_team).
             target_session = target.split(":", 1)[0]
-            known_team = _team_for_session(target_session)
+            known_team = _team_for_session(target_session, known_teams)
             if known_team:
                 team_sn = known_team
             elif recipient in registered_by_team:
@@ -434,8 +483,11 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
             sender_sn = sender.split(":", 1)[0] if ":" in sender else ""
             if not sender_sn or sender_sn == team_sn:
                 continue
-            pane_to_team[sender] = team_sn
-    return pane_to_team
+            # dispatch_pairs() yields newest first, so the first team we see for
+            # a sender is where it most recently dispatched. An orchestrator
+            # that moved on to another team is tagged by where it works now.
+            from_dispatch.setdefault(sender, team_sn)
+    return {**from_dispatch, **from_marker}
 
 
 def _worker_session_window(target: str) -> str:
@@ -464,6 +516,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json(self._task(tid))
         elif self.path == "/api/hosts":
             self._send_json({"hosts": STORE.get_hosts()})
+        elif self.path == "/api/teams":
+            # Read-only. Archiving is deliberately left to lib/teams.sh so that
+            # nothing reachable over the network can move a team's history.
+            self._send_json({"teams": _teams_payload(set()),
+                             "dormant_days": TEAM_DORMANT_DAYS,
+                             "stale_days": TEAM_STALE_DAYS})
         elif self.path == "/api/events":
             self._stream_events()
         else:
@@ -587,6 +645,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "state_dir": str(STATE_DIR),
             "hosts": STORE.get_hosts(),
             "workers": workers,
+            "teams": _teams_payload({w["team_name"] for w in workers if w.get("team_name")}),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -597,6 +656,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     global STATE_DIR, STATE_ROOT, SESSION_NAME, STORE
+    global TEAM_DORMANT_DAYS, TEAM_STALE_DAYS
 
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8765)
@@ -609,11 +669,17 @@ def main():
     )
     p.add_argument("--stale-after", type=float, default=30.0)
     p.add_argument("--evict-after", type=float, default=300.0)
+    p.add_argument("--dormant-days", type=int, default=TEAM_DORMANT_DAYS,
+                   help="team idle this long is 'dormant' (config.env TEAM_DORMANT_DAYS)")
+    p.add_argument("--stale-days", type=int, default=TEAM_STALE_DAYS,
+                   help="team idle this long is 'stale' (config.env TEAM_STALE_DAYS)")
     args = p.parse_args()
 
     SESSION_NAME = args.session_name
     STATE_DIR = Path(args.state_dir)
     STATE_ROOT = Path(args.state_root) if args.state_root else STATE_DIR.parent
+    TEAM_DORMANT_DAYS = args.dormant_days
+    TEAM_STALE_DAYS = args.stale_days
     STORE = HostStateStore(
         stale_after_seconds=args.stale_after,
         evict_after_seconds=args.evict_after,

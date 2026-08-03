@@ -1,8 +1,8 @@
 # darkarchon — Dashboard UI
 
-Phase 1 (Core) prototype. React + TypeScript + Vite + Zustand + CSS Modules.
+React + TypeScript + Vite + Zustand + CSS Modules.
 
-Backend (`dashboard.py`) integration is Phase 3. Phase 1 validates the design.md spec visually using dummy data only.
+Hub-connected by default: `useHubPolling` polls `dashboard.py`'s `/api/status` and `useEventStream` subscribes to `/api/events` for instant pulses. Set `VITE_USE_DUMMY=1` to run against the fixed snapshot in `src/mocks/` instead — no hub needed, and the DebugPanel appears for triggering states by hand.
 
 ## Dev
 
@@ -33,14 +33,15 @@ src/
 ├── styles/                         tokens (DESIGN.md Section 2), reset, global
 ├── components/                     CSS Modules + colocated tsx
 ├── types/raw.ts                    hub /api/status response (Phase 3 integration baseline)
-├── types/domain.ts                 UI tree (Host/Team/Worker)
-├── utils/transform.ts              raw → domain + isHostStale
+├── types/domain.ts                 UI tree (Host/Team/Worker) + team activity
+├── components/InactiveTeams/       teams with nothing running, collapsed
+├── utils/transform.ts              raw → domain + isHostStale + inactiveTeams
 ├── utils/sortWorkers.ts            DESIGN.md Section 4.3 sort rules
 ├── store/dashboard.ts              Zustand
-└── mocks/                          dummy + question overlay (Phase 1 only)
+└── mocks/                          dummy snapshot + question overlay (VITE_USE_DUMMY=1)
 ```
 
 ## Reference docs
 
-- `../DESIGN.md` — single source of truth for design (consult the design director before making changes)
-- `../implementation_plan_phase1.md` — build plan and verification checklist for this Phase
+- `../DESIGN.md` — design spec (consult the design director before making changes)
+- `../README.md` — hub, agent, and team lifecycle
