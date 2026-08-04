@@ -15,6 +15,7 @@ function w(
     tmuxTarget: `${name}:1`,
     process: 'claude',
     isOrchestrator: false,
+    unseenDone: false,
     enteredStateAt,
     dispatchOut: false,
     dispatchIn: false,
@@ -96,6 +97,55 @@ describe('sortWorkersForTeam', () => {
   it('empty input → empty output', () => {
     expect(sortWorkersForTeam([], false)).toEqual([]);
     expect(sortWorkersForTeam([], true)).toEqual([]);
+  });
+
+  it('idle with an unreviewed result sits between rate_limited and busy', () => {
+    const sorted = sortWorkersForTeam(
+      [
+        w('plain-idle', 'idle'),
+        w('busy-one', 'busy'),
+        { ...w('done-one', 'idle'), unseenDone: true, finishedAtMs: 1000 },
+        w('rate', 'rate_limited'),
+        w('await', 'awaiting_user:question'),
+      ],
+      false
+    );
+    expect(sorted.map((x) => x.name)).toEqual([
+      'await',
+      'rate',
+      'done-one',
+      'busy-one',
+      'plain-idle',
+    ]);
+  });
+
+  it('multiple unreviewed results ordered most-recent first', () => {
+    const sorted = sortWorkersForTeam(
+      [
+        { ...w('older', 'idle'), unseenDone: true, finishedAtMs: 1000 },
+        { ...w('newer', 'idle'), unseenDone: true, finishedAtMs: 2000 },
+      ],
+      false
+    );
+    expect(sorted.map((x) => x.name)).toEqual(['newer', 'older']);
+  });
+
+  it('unseenDone on a busy worker does not promote it above other busy', () => {
+    // The row shows a ✓ badge instead — the worker is already working again,
+    // so it doesn't belong in the "review me" group.
+    const sorted = sortWorkersForTeam(
+      [
+        { ...w('busy-done', 'busy'), unseenDone: true, finishedAtMs: 1000 },
+        w('plain-idle', 'idle'),
+        w('another-busy', 'busy'),
+      ],
+      false
+    );
+    expect(sorted.map((x) => x.name)).toEqual([
+      'another-busy',
+      'busy-done',
+      'plain-idle',
+    ]);
   });
 
   it('groups awaiting_user:typed and awaiting_user:question together', () => {

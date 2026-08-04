@@ -572,6 +572,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for ev in events:
                 BROKER.publish(ev)
             self._send_json({"accepted": True, "events": len(events)})
+        elif self.path == "/api/ack":
+            # Mark finished-but-unreviewed work as seen. Body: {"all": true}
+            # or {"host": ..., "target": ...}. The UI calls this when the user
+            # opens a worker's detail panel or hits the clear-all button;
+            # tmux-side viewing is acked hub-side via the `focused` flag.
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 10_000:
+                self._send(400, "text/plain", b"bad request")
+                return
+            try:
+                body = json.loads(self.rfile.read(length)) if length else {}
+            except json.JSONDecodeError:
+                self._send(400, "text/plain", b"invalid json")
+                return
+            if not isinstance(body, dict):
+                self._send(400, "text/plain", b"body must be an object")
+                return
+            if body.get("all"):
+                acked = STORE.ack()
+            else:
+                host, target = body.get("host"), body.get("target")
+                if not host or not target:
+                    self._send(400, "text/plain", b"host and target required")
+                    return
+                acked = STORE.ack(host, target)
+            self._send_json({"acked": acked})
         else:
             self._send(404, "text/plain", b"not found")
 

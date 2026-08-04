@@ -70,6 +70,17 @@ export interface RawWorker {
    */
   focused?: boolean;
   /**
+   * Unix epoch seconds of the last busy→idle transition the hub observed.
+   * Absent until the worker finishes its first turn after hub start.
+   */
+  finished_at?: number;
+  /**
+   * Unix epoch seconds when the user last demonstrably saw this worker:
+   * focused tmux pane, detail-panel open, or explicit ack (POST /api/ack).
+   * `finished_at > acked_at` ⇒ there is a result the user hasn't reviewed.
+   */
+  acked_at?: number;
+  /**
    * Terminal tail — last N lines of stdout/stderr from the worker pane.
    *
    * Phase 3a uses this to render the panel's Recent Output section

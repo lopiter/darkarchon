@@ -23,6 +23,14 @@ class HostStateStore:
         self._stale_after = stale_after_seconds
         self._evict_after = evict_after_seconds
         self._hosts: dict[str, dict] = {}  # host_id → {last_seen, workers}
+        # (host_id, target) → {"finished_at": epoch, "acked_at": epoch}.
+        # Unread-result tracking: `finished_at` stamps the last busy→idle
+        # transition, `acked_at` the last time the user demonstrably saw the
+        # worker (focused pane, detail panel, explicit ack). The UI shows
+        # "done, unreviewed" while finished_at > acked_at. Kept separate from
+        # the worker dicts because those are replaced wholesale on every host
+        # report and this has to survive across reports.
+        self._done: dict[tuple[str, str], dict] = {}
         self._lock = threading.Lock()
 
     def _evict_expired(self, now: float) -> None:
@@ -33,6 +41,8 @@ class HostStateStore:
         ]
         for h in dead:
             del self._hosts[h]
+            for k in [k for k in self._done if k[0] == h]:
+                del self._done[k]
 
     def update_host(
         self, host_id: str, workers: list[dict], teams: list[dict] | None = None
@@ -63,6 +73,20 @@ class HostStateStore:
                             "to": cur_state,
                         }
                     )
+                if tgt:
+                    key = (host_id, tgt)
+                    if prev_state in ("busy", "compacting") and cur_state == "idle":
+                        self._done.setdefault(key, {})["finished_at"] = now
+                    # A focused pane is being looked at right now — anything it
+                    # finished is seen the moment it happens (mirrors the
+                    # notify-watcher rule: no alert for the pane you watch).
+                    if w.get("focused") and key in self._done:
+                        self._done[key]["acked_at"] = now
+            # Registry replacement is wholesale per host; done-markers for panes
+            # that no longer report would otherwise leak forever.
+            targets = {w.get("target") for w in workers}
+            for k in [k for k in self._done if k[0] == host_id and k[1] not in targets]:
+                del self._done[k]
             self._hosts[host_id] = {
                 "last_seen": now,
                 "workers": list(workers),
@@ -83,8 +107,34 @@ class HostStateStore:
                     if is_stale:
                         decorated["state"] = "dead"
                         decorated["detail"] = f"host stale ({int(now - info['last_seen'])}s)"
+                    done = self._done.get((host_id, w.get("target")))
+                    if done and "finished_at" in done:
+                        decorated["finished_at"] = done["finished_at"]
+                        if "acked_at" in done:
+                            decorated["acked_at"] = done["acked_at"]
                     out.append(decorated)
         return out
+
+    def ack(self, host_id: str | None = None, target: str | None = None) -> int:
+        """Mark finished work as seen. Specific worker, or everything when
+        called with no arguments. Returns how many markers were acked.
+
+        Only workers with a recorded finish are touched — acking a worker that
+        never finished anything is a no-op, so the endpoint can be called
+        liberally (every detail-panel open) without growing state.
+        """
+        now = time.time()
+        n = 0
+        with self._lock:
+            for (h, t), done in self._done.items():
+                if host_id is not None and h != host_id:
+                    continue
+                if target is not None and t != target:
+                    continue
+                if done.get("finished_at", 0) > done.get("acked_at", 0):
+                    done["acked_at"] = now
+                    n += 1
+        return n
 
     def get_all_teams(self) -> list[dict]:
         """Every host's team index rows, each stamped with its host.

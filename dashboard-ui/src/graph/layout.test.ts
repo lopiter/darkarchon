@@ -15,6 +15,7 @@ function mkWorker(
     process: 'claude',
     isOrchestrator: false,
     focused: false,
+    unseenDone: false,
     enteredStateAt: '2026-01-01T00:00:00.000Z',
     dispatchOut: false,
     dispatchIn: false,

@@ -45,6 +45,15 @@ export interface Worker {
    * Phase 3: source TBD (frontend tracks state change OR backend adds field).
    */
   enteredStateAt: string;
+  /**
+   * The worker finished a turn (busy→idle) that the user hasn't looked at
+   * yet — not a state (the state machine correctly says idle/busy), but an
+   * unread marker derived from hub `finished_at > acked_at`. Cleared by
+   * viewing the tmux pane, opening the detail panel, or ack-all.
+   */
+  unseenDone: boolean;
+  /** Epoch ms of the last busy→idle transition (undefined if none recorded). */
+  finishedAtMs?: number;
   /** Tier 2 indicators (DESIGN.md Section 4.2). */
   dispatchOut: boolean;
   dispatchIn: boolean;

@@ -86,6 +86,104 @@ def test_evicted_host_can_rejoin_fresh(monkeypatch):
     assert workers[0]["state"] == "idle"  # fresh, not carried-over dead
 
 
+def _report(store, state, *, focused=False, host="main-pc", target="x:1"):
+    w = {"name": "w1", "state": state, "target": target}
+    if focused:
+        w["focused"] = True
+    return store.update_host(host, workers=[w])
+
+
+def test_busy_to_idle_records_finished_at(monkeypatch):
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy")
+    fake_now[0] = 1010.0
+    _report(store, "idle")
+    (w,) = store.get_all_workers()
+    assert w["finished_at"] == 1010.0
+    assert "acked_at" not in w  # nobody has looked yet → unreviewed
+
+
+def test_compacting_to_idle_also_counts_as_finished(monkeypatch):
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy")
+    _report(store, "compacting")
+    fake_now[0] = 1020.0
+    _report(store, "idle")
+    (w,) = store.get_all_workers()
+    assert w["finished_at"] == 1020.0
+
+
+def test_focused_pane_acks_immediately(monkeypatch):
+    """Finishing while the user watches the pane is seen the moment it lands."""
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy")
+    fake_now[0] = 1010.0
+    _report(store, "idle", focused=True)
+    (w,) = store.get_all_workers()
+    assert w["finished_at"] == 1010.0
+    assert w["acked_at"] == 1010.0
+
+
+def test_focusing_later_acks_pending_finish(monkeypatch):
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy")
+    fake_now[0] = 1010.0
+    _report(store, "idle")
+    fake_now[0] = 1050.0
+    _report(store, "idle", focused=True)  # user attaches to the pane
+    (w,) = store.get_all_workers()
+    assert w["acked_at"] == 1050.0
+
+
+def test_ack_single_worker_and_ack_all(monkeypatch):
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    store.update_host("main-pc", workers=[
+        {"name": "w1", "state": "busy", "target": "x:1"},
+        {"name": "w2", "state": "busy", "target": "x:2"},
+    ])
+    fake_now[0] = 1010.0
+    store.update_host("main-pc", workers=[
+        {"name": "w1", "state": "idle", "target": "x:1"},
+        {"name": "w2", "state": "idle", "target": "x:2"},
+    ])
+
+    assert store.ack("main-pc", "x:1") == 1
+    by_name = {w["name"]: w for w in store.get_all_workers()}
+    assert "acked_at" in by_name["w1"]
+    assert "acked_at" not in by_name["w2"]
+
+    assert store.ack() == 1  # only w2 still had an unreviewed finish
+    assert store.ack() == 0  # nothing left → no-op
+
+
+def test_done_marker_pruned_when_worker_disappears(monkeypatch):
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy")
+    _report(store, "idle")
+    store.update_host("main-pc", workers=[])  # pane gone
+    _report(store, "idle")  # same target rejoins fresh
+    (w,) = store.get_all_workers()
+    assert "finished_at" not in w
+
+
 def test_emit_state_change_events():
     """When a worker transitions from busy → idle, store yields an event."""
     store = HostStateStore(stale_after_seconds=60)
