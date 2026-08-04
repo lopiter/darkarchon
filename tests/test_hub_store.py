@@ -119,21 +119,42 @@ def test_compacting_to_idle_also_counts_as_finished(monkeypatch):
     assert w["finished_at"] == 1020.0
 
 
-def test_focused_pane_acks_immediately(monkeypatch):
-    """Finishing while the user watches the pane is seen the moment it lands."""
+def test_finishing_in_a_continuously_focused_pane_stays_unseen(monkeypatch):
+    """tmux keeps the active pane 'focused' even when the terminal app is
+    hidden behind another window, so merely-being-focused must NOT ack — the
+    user parked on a pane while working in the browser would otherwise never
+    see its completions."""
     store = HostStateStore(stale_after_seconds=60)
     fake_now = [1000.0]
     monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
 
-    _report(store, "busy")
+    _report(store, "busy", focused=True)
     fake_now[0] = 1010.0
     _report(store, "idle", focused=True)
     (w,) = store.get_all_workers()
     assert w["finished_at"] == 1010.0
-    assert w["acked_at"] == 1010.0
+    assert "acked_at" not in w
 
 
-def test_focusing_later_acks_pending_finish(monkeypatch):
+def test_typing_in_the_pane_acks_pending_finish(monkeypatch):
+    """Typing into the worker's pane is deliberate engagement — the user is
+    right there, responding to what it produced."""
+    store = HostStateStore(stale_after_seconds=60)
+    fake_now = [1000.0]
+    monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
+
+    _report(store, "busy", focused=True)
+    fake_now[0] = 1010.0
+    _report(store, "idle", focused=True)
+    fake_now[0] = 1020.0
+    _report(store, "typed", focused=True)
+    (w,) = store.get_all_workers()
+    assert w["acked_at"] == 1020.0
+
+
+def test_focus_arrival_acks_pending_finish(monkeypatch):
+    """Switching TO the pane (focus transition, not steady state) is the
+    'I'm looking at it now' signal that marks the result seen."""
     store = HostStateStore(stale_after_seconds=60)
     fake_now = [1000.0]
     monkeypatch.setattr("lib.hub_store.time.time", lambda: fake_now[0])
@@ -142,7 +163,7 @@ def test_focusing_later_acks_pending_finish(monkeypatch):
     fake_now[0] = 1010.0
     _report(store, "idle")
     fake_now[0] = 1050.0
-    _report(store, "idle", focused=True)  # user attaches to the pane
+    _report(store, "idle", focused=True)  # user switches to the pane
     (w,) = store.get_all_workers()
     assert w["acked_at"] == 1050.0
 

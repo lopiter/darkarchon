@@ -301,8 +301,11 @@ is sufficiently identified by the `[ORCH]` badge in column (2).
 
 "Done" is not a worker state — the state machine correctly reports `idle` —
 but an **unread event**: the hub stamps `finished_at` on every busy→idle
-transition and `acked_at` whenever the user demonstrably saw the worker
-(focused tmux pane, detail-panel open, explicit ack via `POST /api/ack`).
+transition and `acked_at` whenever the user demonstrably engaged with the
+worker: switching to its tmux pane (focus *arrival*, not steady focus — an
+attached client keeps its active pane "focused" even while the terminal sits
+behind the browser), typing in the pane, opening the detail panel, or an
+explicit ack via `POST /api/ack`.
 `finished_at > acked_at` ⇒ the row renders as **done** (green left bar,
 `done · 3m` label) while idle, or a small green ✓ badge if the worker is
 already busy on its next task. A fixed top-right chip summarizes the fleet

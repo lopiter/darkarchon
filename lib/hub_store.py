@@ -77,11 +77,18 @@ class HostStateStore:
                     key = (host_id, tgt)
                     if prev_state in ("busy", "compacting") and cur_state == "idle":
                         self._done.setdefault(key, {})["finished_at"] = now
-                    # A focused pane is being looked at right now — anything it
-                    # finished is seen the moment it happens (mirrors the
-                    # notify-watcher rule: no alert for the pane you watch).
-                    if w.get("focused") and key in self._done:
-                        self._done[key]["acked_at"] = now
+                    # Ack only on deliberate engagement with the pane, not on it
+                    # merely being tmux-active: an attached client keeps its
+                    # active pane "focused" even while the terminal sits behind
+                    # the browser, so a continuous-focus ack silently swallowed
+                    # every finish in the pane the user happened to be parked
+                    # on. Two signals DO mean the user is really there:
+                    #   - focus arrival (they just switched to this pane)
+                    #   - typing in it (scrape reports 'typed')
+                    if key in self._done:
+                        was_focused = bool(prev_by_target.get(tgt, {}).get("focused"))
+                        if (w.get("focused") and not was_focused) or cur_state == "typed":
+                            self._done[key]["acked_at"] = now
             # Registry replacement is wholesale per host; done-markers for panes
             # that no longer report would otherwise leak forever.
             targets = {w.get("target") for w in workers}
