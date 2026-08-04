@@ -157,6 +157,21 @@ def _team_rows() -> list:
     return rows
 
 
+def _live_team_names(workers: list) -> set:
+    """Teams that have at least one worker actually running.
+
+    A reported worker is not the same as a live one. Registry entries outlive
+    their panes, so a team can report several workers and have every one of
+    them dead — that team has not been touched since whenever those panes
+    died, and grading it 'live' both overstates it and hides its real age.
+    """
+    return {
+        w["team_name"]
+        for w in workers
+        if w.get("team_name") and w.get("state") != "dead"
+    }
+
+
 def _teams_payload(live_teams: set) -> list:
     """Team index with liveness from this request's host reports layered on.
 
@@ -650,7 +665,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "state_dir": str(STATE_DIR),
             "hosts": STORE.get_hosts(),
             "workers": workers,
-            "teams": _teams_payload({w["team_name"] for w in workers if w.get("team_name")}),
+            "teams": _teams_payload(_live_team_names(workers)),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 

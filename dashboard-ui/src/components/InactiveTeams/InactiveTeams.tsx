@@ -45,9 +45,12 @@ export function InactiveTeams() {
                 {t.idleSeconds == null ? 'never' : formatPing(t.idleSeconds * 1000)}
                 {t.source ? ` · ${t.source}` : ''}
               </span>
+              {/* Spelled out rather than abbreviated: an age column sits right
+                  beside this, and "2w" next to "88d" reads as two weeks. */}
               <span className={styles.meta}>
-                {t.registeredWorkers}w · {size(t.sizeBytes)}
+                {t.registeredWorkers} {t.registeredWorkers === 1 ? 'worker' : 'workers'}
               </span>
+              <span className={styles.meta}>{size(t.sizeBytes)}</span>
             </div>
           ))}
           <p className={styles.hint}>

@@ -24,11 +24,18 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* This is a reference list, not a data table — let it stay legible instead
+     of stretching name and age to opposite ends of a wide monitor. */
+  max-width: 46rem;
+  /* The view/theme toggles are fixed to the bottom-left corner, and this is
+     the last thing on the page, so without this the final rows sit under
+     them. */
+  padding-bottom: 5.5rem;
 }
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 4.5rem minmax(0, 1fr) 6rem;
+  grid-template-columns: minmax(0, 1fr) 4.5rem 9rem 5.5rem 3.5rem;
   gap: 12px;
   align-items: baseline;
   color: var(--text-tertiary);
@@ -55,6 +62,7 @@
 .age,
 .meta {
   opacity: 0.6;
+  white-space: nowrap;
 }
 
 .meta {

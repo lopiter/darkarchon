@@ -105,3 +105,32 @@ def test_own_team_listed_once_under_session_name(hub_at):
     found = _all_state_dirs()
     assert found.count((root / "mine", "mine")) == 1
     assert len(found) == 1
+
+
+def test_live_teams_ignore_dead_workers():
+    """A team can report several workers and have every one of them dead —
+    registry entries outlive their panes. Grading that 'live' both overstates
+    it and hides the age the dashboard is supposed to surface."""
+    workers = [
+        {"team_name": "gone", "state": "dead"},
+        {"team_name": "gone", "state": "dead"},
+        {"team_name": "working", "state": "dead"},
+        {"team_name": "working", "state": "idle"},
+    ]
+
+    assert dashboard._live_team_names(workers) == {"working"}
+
+
+def test_live_teams_count_every_non_dead_state():
+    """Only 'dead' is evidence of absence; anything else is a running pane."""
+    workers = [
+        {"team_name": f"t{i}", "state": s}
+        for i, s in enumerate(["idle", "busy", "awaiting_user", "compacting",
+                               "rate_limited", "typed", "unknown"])
+    ]
+
+    assert len(dashboard._live_team_names(workers)) == len(workers)
+
+
+def test_live_teams_skip_workers_without_a_team():
+    assert dashboard._live_team_names([{"state": "idle"}, {"team_name": "", "state": "idle"}]) == set()

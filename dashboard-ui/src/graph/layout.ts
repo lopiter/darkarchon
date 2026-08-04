@@ -124,3 +124,23 @@ export function buildGraph(hosts: Host[]): GraphNode[] {
 export function topologyKey(nodes: GraphNode[]): string {
   return nodes.map((n) => `${n.id}>${n.parentId ?? ''}`).join('|');
 }
+
+/**
+ * Whether a "spawned by" lineage link should be drawn from `src` to `node`.
+ *
+ * The link exists to show a relation the tree cannot: an orchestrator spawned
+ * by something that lives elsewhere, e.g. hermes driving orchestrators that
+ * each sit in their own team. Where the tree already expresses the relation,
+ * a second edge is noise drawn across the cards.
+ *
+ * Suppressed when the spawner IS the tree parent, and when it is a sibling
+ * under the same parent — a team node and its orchestrator worker often share
+ * a name, so a worker spawned by its own team's orchestrator would otherwise
+ * get a link doubling back over the group it is already drawn inside.
+ */
+export function shouldDrawLineage(node: GraphNode, src: GraphNode | undefined): boolean {
+  if (!src || src === node) return false;
+  if (src.id === node.parentId) return false;
+  if (node.parentId !== null && src.parentId === node.parentId) return false;
+  return true;
+}
