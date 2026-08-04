@@ -155,3 +155,47 @@ def test_liveness_is_scoped_to_the_reporting_host(running_hub):
 
     assert teams[("alpha", "voc")]["tier"] == "live"
     assert teams[("beta", "voc")]["tier"] != "live"
+
+
+def _ack(url_base, body):
+    req = urllib.request.Request(
+        f"{url_base}/api/ack",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _worker(state, target="x:1.1"):
+    return {"target": target, "name": "w1", "state": state, "process": "claude", "cwd": "/"}
+
+
+def test_ack_endpoint_clears_unreviewed_finish(running_hub):
+    url_base, store = running_hub
+    _post(url_base, "main-pc", {"workers": [_worker("busy")]})
+    _post(url_base, "main-pc", {"workers": [_worker("idle")]})
+    (w,) = store.get_all_workers()
+    assert "finished_at" in w and "acked_at" not in w
+
+    assert _ack(url_base, {"host": "main-pc", "target": "x:1.1"})["acked"] == 1
+    (w,) = store.get_all_workers()
+    assert w["acked_at"] >= w["finished_at"]
+
+
+def test_ack_all_and_validation(running_hub):
+    url_base, store = running_hub
+    _post(url_base, "main-pc", {"workers": [_worker("busy")]})
+    _post(url_base, "main-pc", {"workers": [_worker("idle")]})
+
+    # Missing host/target without all → 400.
+    import urllib.error
+    try:
+        _ack(url_base, {"host": "main-pc"})
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+
+    assert _ack(url_base, {"all": True})["acked"] == 1
+    assert _ack(url_base, {"all": True})["acked"] == 0  # idempotent

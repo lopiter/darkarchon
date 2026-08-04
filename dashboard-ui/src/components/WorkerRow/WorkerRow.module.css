@@ -66,6 +66,9 @@
 .barOrch {
   background: rgba(120, 140, 200, 0.55);
 }
+.barGreen {
+  background: var(--green);
+}
 
 /* "new" dot — appears for 10s after an OS push targeting this row.
  * Sits just right of the left bar so it shares the same "left edge =
@@ -91,6 +94,9 @@
 }
 .rowDead {
   opacity: 0.5;
+}
+.rowDone {
+  background: var(--green-bg);
 }
 
 /* ── columns ── */
@@ -140,6 +146,20 @@
   gap: 2px;
 }
 
+/* ✓ badge — unreviewed result on a worker that's already busy again.
+ * Shares the mailbox column so "things waiting for you" cluster together. */
+.doneBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green);
+  justify-self: end;
+  margin-right: 4px;
+}
+
+.doneLabel {
+  color: var(--green);
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -154,6 +174,7 @@
   flex-shrink: 0;
 }
 .dotIdle { background: var(--text-faint); }
+.dotDone { background: var(--green); }
 .dotBusy { background: var(--text-muted); }
 .dotAwaiting { background: var(--amber); }
 .dotRate { background: var(--red); }

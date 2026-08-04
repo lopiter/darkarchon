@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AttentionSummary } from './components/AttentionSummary/AttentionSummary';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { DebugPanel } from './components/DebugPanel/DebugPanel';
 import { DetailPanel } from './components/DetailPanel/DetailPanel';
@@ -47,6 +48,7 @@ export function App() {
     <>
       {USE_DUMMY && <DebugPanel />}
       {view === 'graph' ? <GraphView /> : <Dashboard />}
+      <AttentionSummary />
       <ViewToggle />
       <DetailPanel />
     </>

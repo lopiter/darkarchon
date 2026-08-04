@@ -87,6 +87,40 @@ interface DashboardStore {
   selectWorker: (id: string) => void;
   /** Phase 3 — close the detail panel. */
   closePanel: () => void;
+
+  /**
+   * Mark a worker's finished-but-unreviewed result as seen: optimistic local
+   * clear + POST /api/ack. Called from selectWorker (opening the panel IS
+   * looking at the result) — no-op for workers with nothing unseen.
+   */
+  ackWorker: (id: string) => void;
+  /** Clear every unseen-done marker (header "clear" button). */
+  ackAll: () => void;
+}
+
+/** Set unseenDone=false on the matching worker (or all when id is null). */
+function clearUnseen(hosts: Host[], id: string | null): Host[] {
+  return hosts.map((h) => ({
+    ...h,
+    teams: h.teams.map((t) => ({
+      ...t,
+      workers: t.workers.map((w) =>
+        w.unseenDone && (id === null || w.id === id)
+          ? { ...w, unseenDone: false }
+          : w
+      ),
+    })),
+  }));
+}
+
+/** Fire-and-forget ack POST. Polling re-syncs state, so failures are safe
+ * to swallow — the marker simply reappears on the next poll. */
+function postAck(body: Record<string, unknown>): void {
+  fetch('/api/ack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).catch(() => {});
 }
 
 let pulseSeq = 0;
@@ -186,6 +220,28 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
       return { deadSince: next };
     }),
 
-  selectWorker: (id) => set({ selectedWorkerId: id }),
+  selectWorker: (id) => {
+    set({ selectedWorkerId: id });
+    get().ackWorker(id);
+  },
   closePanel: () => set({ selectedWorkerId: null }),
+
+  ackWorker: (id) => {
+    const { hosts } = get();
+    for (const h of hosts) {
+      for (const t of h.teams) {
+        const w = t.workers.find((w) => w.id === id);
+        if (!w) continue;
+        if (!w.unseenDone) return;
+        postAck({ host: h.id, target: w.tmuxTarget });
+        set({ hosts: clearUnseen(hosts, id) });
+        return;
+      }
+    }
+  },
+
+  ackAll: () => {
+    postAck({ all: true });
+    set((s) => ({ hosts: clearUnseen(s.hosts, null) }));
+  },
 }));

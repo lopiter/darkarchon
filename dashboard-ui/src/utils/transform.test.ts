@@ -95,6 +95,30 @@ describe('transformRawStatus', () => {
     expect(states).toEqual(['awaiting_user:permission', 'awaiting_user:question']);
   });
 
+  it('derives unseenDone from finished_at > acked_at', () => {
+    const workers = transformRawStatus(
+      res([
+        rw({ name: 'unseen', target: ':1', finished_at: secAgo(60) }),
+        rw({
+          name: 'acked',
+          target: ':2',
+          finished_at: secAgo(60),
+          acked_at: secAgo(30),
+        }),
+        rw({ name: 'never-finished', target: ':3' }),
+      ])
+    )[0]!.teams[0]!.workers;
+    expect(workers.map((w) => w.unseenDone)).toEqual([true, false, false]);
+    expect(workers[0]!.finishedAtMs).toBe(secAgo(60) * 1000);
+  });
+
+  it('a dead worker never reports unseenDone', () => {
+    const workers = transformRawStatus(
+      res([rw({ name: 'gone', target: ':1', state: 'dead', finished_at: secAgo(60) })])
+    )[0]!.teams[0]!.workers;
+    expect(workers[0]!.unseenDone).toBe(false);
+  });
+
   it('maps focused through, defaulting to false when the agent omits it', () => {
     const [host] = transformRawStatus(
       res([

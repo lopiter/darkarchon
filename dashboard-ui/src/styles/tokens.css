@@ -35,6 +35,10 @@
   --red:        #e24b4a;
   --red-border: rgba(226, 75, 74, 0.5);
 
+  /* done-unreviewed marker (unseenDone) */
+  --green:    #4faf6f;
+  --green-bg: rgba(79, 175, 111, 0.07);
+
   --blue:        #378add;
   --blue-text:   #9fb3dd;
   --blue-bg:     rgba(120, 140, 200, 0.12);
@@ -107,6 +111,10 @@
 
   --red:        #c93534;
   --red-border: rgba(226, 75, 74, 0.5);
+
+  /* done-unreviewed marker (unseenDone) */
+  --green:    #2e7d4c;
+  --green-bg: rgba(46, 125, 76, 0.10);
 
   --blue:        #2f6fb0;
   --blue-text:   #2f5a8f;

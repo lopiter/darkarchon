@@ -162,10 +162,16 @@ function displayTeam(rawTeam: string): string {
 }
 
 function rawToWorker(rw: RawWorker, refTs: number): Worker {
+  const state = mapState(rw.state);
   return {
     id: `${rw.host}:${rw.target}`,
     name: displayName(rw),
-    state: mapState(rw.state),
+    state,
+    unseenDone:
+      (rw.finished_at ?? 0) > (rw.acked_at ?? 0) &&
+      state !== 'dead' &&
+      state !== 'unknown',
+    finishedAtMs: rw.finished_at ? rw.finished_at * 1000 : undefined,
     role: rw.role,
     tmuxTarget: rw.target,
     process: rw.process,

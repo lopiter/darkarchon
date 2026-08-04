@@ -288,13 +288,30 @@ is sufficiently identified by the `[ORCH]` badge in column (2).
 ```
 1. awaiting_user:typed / awaiting_user:question (reverse chronological, most recent on top)
 2. rate_limited
-3. busy / compacting (by name)
-4. idle (by name)
-5. dead / unknown (hidden after 5 min)
+3. idle + unseenDone — "done, unreviewed" (most recently finished on top)
+4. busy / compacting (by name)
+5. idle (by name)
+6. dead / unknown (hidden after 5 min)
 ```
 
 - Sorting operates **only within a team.** It does not cross teams
 - When an awaiting occurs within the same team, it smoothly moves to the top (0.6s ease-out)
+
+### 4.4 Unseen-done (unread results)
+
+"Done" is not a worker state — the state machine correctly reports `idle` —
+but an **unread event**: the hub stamps `finished_at` on every busy→idle
+transition and `acked_at` whenever the user demonstrably saw the worker
+(focused tmux pane, detail-panel open, explicit ack via `POST /api/ack`).
+`finished_at > acked_at` ⇒ the row renders as **done** (green left bar,
+`done · 3m` label) while idle, or a small green ✓ badge if the worker is
+already busy on its next task. A fixed top-right chip summarizes the fleet
+(`⚠ N awaiting · ✓ M done` + clear-all) and the same counts prefix
+`document.title` so the browser tab shows them without focus.
+
+Color semantics: **amber = blocked on you (act now), green = result ready
+(review when convenient), gray = truly idle.** Completions deliberately do
+not interrupt (no pulse/push) — they accumulate quietly until reviewed.
 
 ---
 

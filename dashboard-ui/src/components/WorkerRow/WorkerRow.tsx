@@ -18,6 +18,7 @@ import type { KeyboardEvent } from 'react';
 import { AgentLogo } from '../AgentLogo/AgentLogo';
 import { useDashboardStore } from '../../store/dashboard';
 import type { Worker, WorkerState } from '../../types/domain';
+import { formatPing } from '../../utils/formatTime';
 import styles from './WorkerRow.module.css';
 
 interface Props {
@@ -68,20 +69,28 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
   const awaiting = isAwaiting(worker.state);
   const rate = worker.state === 'rate_limited';
   const isDead = worker.state === 'dead' || worker.state === 'unknown';
+  // Unreviewed result. While the worker sits idle the whole row goes green
+  // ("done"); if it's already busy on the next task, only a ✓ badge remains.
+  const done = worker.state === 'idle' && worker.unseenDone;
+  const doneBadge = worker.unseenDone && !done && !isDead;
 
   const barClass = awaiting
     ? styles.barAmber
     : rate
       ? styles.barRed
-      : worker.isOrchestrator
-        ? styles.barOrch
-        : '';
+      : done
+        ? styles.barGreen
+        : worker.isOrchestrator
+          ? styles.barOrch
+          : '';
 
   const rowTintClass = awaiting
     ? styles.rowAwaiting
     : rate
       ? styles.rowRate
-      : '';
+      : done
+        ? styles.rowDone
+        : '';
 
   const deadClass = isDead && !hostStale ? styles.rowDead : '';
 
@@ -147,6 +156,14 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
       <div className={styles.target}>{worker.tmuxTarget}</div>
 
       <div>
+        {doneBadge && (
+          <span
+            className={styles.doneBadge}
+            aria-label="finished a task you haven't reviewed"
+          >
+            ✓
+          </span>
+        )}
         {worker.mailboxPending > 0 && (
           <span
             key={mailboxBumpClass ? `mb-${pulse!.key}` : 'mb'}
@@ -160,8 +177,18 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
       </div>
 
       <div className={styles.status}>
-        <span className={`${styles.dot} ${STATE_DOT[worker.state]}`} />
-        <span>{STATE_LABEL[worker.state]}</span>
+        <span
+          className={`${styles.dot} ${done ? styles.dotDone : STATE_DOT[worker.state]}`}
+        />
+        <span className={done ? styles.doneLabel : undefined}>
+          {done
+            ? `done${
+                worker.finishedAtMs
+                  ? ` · ${formatPing(Date.now() - worker.finishedAtMs)}`
+                  : ''
+              }`
+            : STATE_LABEL[worker.state]}
+        </span>
         <span
           className={`${styles.dispatchArrow} ${worker.dispatchOut ? styles.dispatchArrowActive : ''}`}
           aria-hidden="true"
