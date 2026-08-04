@@ -134,6 +134,7 @@ export function GraphView() {
             <span><i style={{ background: 'var(--g-busy)' }} />busy</span>
             <span><i style={{ background: 'var(--g-faint)' }} />idle</span>
             <span><i style={{ background: 'var(--g-warn)' }} />awaiting</span>
+            <span><i style={{ background: 'var(--g-ok)' }} />done</span>
             <span><i style={{ background: 'var(--g-bad)' }} />dead·limited</span>
             <span><i style={{ background: 'var(--g-accent)' }} />dispatch</span>
             <span><i style={{ background: 'var(--g-orch)' }} />spawned-by</span>
