@@ -44,10 +44,42 @@
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) 4.5rem 9rem 5.5rem 3.5rem;
+  grid-template-columns: minmax(0, 1.4fr) 4.5rem 9rem 5.5rem 3.5rem 3rem;
   gap: 12px;
   align-items: baseline;
   color: var(--text-meta);
+}
+
+.group + .group {
+  margin-top: 10px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.groupName {
+  color: var(--text-muted);
+  letter-spacing: 0.6px;
+}
+
+/* Only interactive thing in the section, so it stays legible rather than
+   fading into the metadata around it. */
+.copy {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-tertiary);
+  text-align: right;
+}
+
+.copy:hover {
+  color: var(--text-secondary);
 }
 
 .name {

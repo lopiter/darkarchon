@@ -536,7 +536,8 @@ lib/teams.sh list                      # grade every team
 lib/teams.sh list --json               # same, machine-readable
 lib/teams.sh archive <team> [<team>…]  # move specific teams aside
 lib/teams.sh archive --stale           # move everything graded 'stale'
-lib/teams.sh archive --stale --yes     # skip the confirmation prompt
+lib/teams.sh archive --inactive        # move everything with nothing running
+lib/teams.sh archive --inactive --yes  # skip the confirmation prompt
 ```
 
 ```
@@ -550,6 +551,8 @@ perf                         stale       49d dispatch           2    57K
   thresholds: dormant >7d, stale >30d
 ```
 
+`--inactive` is the wider net — every team not currently `live`, which is exactly what the dashboard lists. `--stale` is the subset that has also been quiet past `TEAM_STALE_DAYS`. A target may be a team name, or a path: a worktree team named `myteam-feature-x` lives at `myteam/feature-x`, so only the path finds it.
+
 **Archiving moves, it never deletes.** A team goes to `~/.darkarchon-archive/<date>/<team>/` with its `tasks.db` history intact; restore it by moving the directory back. Three refusals protect you, and a refusal skips that team rather than aborting the batch:
 
 - a team whose tmux session is still alive
@@ -558,7 +561,7 @@ perf                         stale       49d dispatch           2    57K
 
 Archiving is CLI-only on purpose. The hub exposes the index read-only at `/api/teams` (and inside `/api/status`), so nothing reachable over the network can move a team's history.
 
-In the dashboard, a team that has gone quiet carries its age beside the name, and teams with nothing running collapse into an `inactive teams (N)` row at the bottom rather than crowding the ones you're working in.
+In the dashboard, a team that has gone quiet carries its age beside the name, and teams with nothing running collapse into an `inactive teams (N)` row at the bottom rather than crowding the ones you're working in. That list is grouped by host and each group has a **copy archive-all** button (plus one per row) that yields a ready-to-run `teams.sh archive` command for that host — the dashboard never archives anything itself, because only the shell on that machine can check whether a tmux session is still alive.
 
 `tasks.db` is the source-of-truth — query via `lib/tasks.sh` or any SQLite client. The plain-file siblings let you inspect / delete with `cat` / `ls` when needed.
 
