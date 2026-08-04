@@ -227,3 +227,28 @@ def test_registry_is_keyed_by_both_target_and_window_id():
 
     assert registry["@7"] is registry["myteam:backend"]
     assert registry["@7"]["window_id"] == "@7"
+
+
+def test_registry_entries_carry_their_team_state_dir(tmp_path):
+    """Each entry records which team registered it, so a later heartbeat or
+    hook lookup knows which directory describes THIS pane."""
+    team = tmp_path / "small-star"
+    team.mkdir()
+    (team / "workers-runtime.env").write_text(
+        "WORKER_hb_NAME=homepage-backend\nWORKER_hb_TARGET=small-star:homepage-backend\n"
+    )
+
+    entries = parse_registry_file(team / "workers-runtime.env")
+
+    assert entries["small-star:homepage-backend"]["state_dir"] == str(team)
+
+
+def test_resolved_worker_carries_its_state_dir():
+    registry = parse_registry_text(
+        "WORKER_hb_NAME=homepage-backend\nWORKER_hb_TARGET=t:1\n"
+    )
+    registry["t:1"]["state_dir"] = "/s/small-star"
+    scanned = [{"target": "t:1.1", "process": "claude", "cwd": "/", "pane_pid": "1",
+                "window_name": "w", "state": "idle", "detail": ""}]
+
+    assert resolve_workers(scanned, registry)[0]["state_dir"] == "/s/small-star"
