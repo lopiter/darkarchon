@@ -112,25 +112,38 @@ def test_live_teams_ignore_dead_workers():
     registry entries outlive their panes. Grading that 'live' both overstates
     it and hides the age the dashboard is supposed to surface."""
     workers = [
-        {"team_name": "gone", "state": "dead"},
-        {"team_name": "gone", "state": "dead"},
-        {"team_name": "working", "state": "dead"},
-        {"team_name": "working", "state": "idle"},
+        {"host": "h", "team_name": "gone", "state": "dead"},
+        {"host": "h", "team_name": "gone", "state": "dead"},
+        {"host": "h", "team_name": "working", "state": "dead"},
+        {"host": "h", "team_name": "working", "state": "idle"},
     ]
 
-    assert dashboard._live_team_names(workers) == {"working"}
+    assert dashboard._live_team_keys(workers) == {("h", "working")}
 
 
 def test_live_teams_count_every_non_dead_state():
     """Only 'dead' is evidence of absence; anything else is a running pane."""
     workers = [
-        {"team_name": f"t{i}", "state": s}
+        {"host": "h", "team_name": f"t{i}", "state": s}
         for i, s in enumerate(["idle", "busy", "awaiting_user", "compacting",
                                "rate_limited", "typed", "unknown"])
     ]
 
-    assert len(dashboard._live_team_names(workers)) == len(workers)
+    assert len(dashboard._live_team_keys(workers)) == len(workers)
 
 
 def test_live_teams_skip_workers_without_a_team():
-    assert dashboard._live_team_names([{"state": "idle"}, {"team_name": "", "state": "idle"}]) == set()
+    assert dashboard._live_team_keys(
+        [{"host": "h", "state": "idle"}, {"host": "h", "team_name": "", "state": "idle"}]
+    ) == set()
+
+
+def test_same_team_name_on_two_hosts_stays_separate():
+    """Team names are only unique within a host. A live `voc` on one machine
+    must not vouch for an abandoned `voc` on another."""
+    workers = [
+        {"host": "alpha", "team_name": "voc", "state": "idle"},
+        {"host": "beta", "team_name": "voc", "state": "dead"},
+    ]
+
+    assert dashboard._live_team_keys(workers) == {("alpha", "voc")}

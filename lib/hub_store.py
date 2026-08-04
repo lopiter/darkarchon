@@ -34,8 +34,16 @@ class HostStateStore:
         for h in dead:
             del self._hosts[h]
 
-    def update_host(self, host_id: str, workers: list[dict]) -> Iterable[dict]:
-        """Replace this host's workers list. Yield events for state transitions."""
+    def update_host(
+        self, host_id: str, workers: list[dict], teams: list[dict] | None = None
+    ) -> Iterable[dict]:
+        """Replace this host's workers (and team index) list.
+
+        Yields events for state transitions. `teams` is each host's own view of
+        its state dirs — only that host can see them, so it is stored per host
+        rather than merged into a global table. Absent for agents predating the
+        team index, which simply contribute no teams.
+        """
         now = time.time()
         with self._lock:
             prev = self._hosts.get(host_id, {}).get("workers", [])
@@ -55,7 +63,11 @@ class HostStateStore:
                             "to": cur_state,
                         }
                     )
-            self._hosts[host_id] = {"last_seen": now, "workers": list(workers)}
+            self._hosts[host_id] = {
+                "last_seen": now,
+                "workers": list(workers),
+                "teams": list(teams or []),
+            }
             return events
 
     def get_all_workers(self) -> list[dict]:
@@ -72,6 +84,22 @@ class HostStateStore:
                         decorated["state"] = "dead"
                         decorated["detail"] = f"host stale ({int(now - info['last_seen'])}s)"
                     out.append(decorated)
+        return out
+
+    def get_all_teams(self) -> list[dict]:
+        """Every host's team index rows, each stamped with its host.
+
+        A team name is only unique within a host — two machines can both have a
+        `voc` state dir with nothing to do with each other — so the host is
+        carried through and callers must key on the pair.
+        """
+        now = time.time()
+        out: list[dict] = []
+        with self._lock:
+            self._evict_expired(now)
+            for host_id, info in self._hosts.items():
+                for t in info.get("teams", []):
+                    out.append({**t, "host": host_id})
         return out
 
     def get_hosts(self) -> list[dict]:

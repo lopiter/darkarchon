@@ -34,6 +34,7 @@ function rw(overrides: Partial<RawWorker>): RawWorker {
 function team(overrides: Partial<RawTeam>): RawTeam {
   return {
     name: 'someteam',
+    host: 'h',
     state_dir: `/s/${overrides.name ?? 'someteam'}`,
     workers: 1,
     last_activity_at: '2026-05-01T00:00:00Z',
@@ -112,5 +113,35 @@ describe('transformRawStatus team activity', () => {
   it('leaves activity undefined when the hub sends no teams', () => {
     const t = transformRawStatus(res([rw({ team_name: 'alpha' })]))[0]!.teams[0]!;
     expect(t.activity).toBeUndefined();
+  });
+});
+
+describe('team identity across hosts', () => {
+  it('keeps same-named teams on different hosts apart', () => {
+    // The defect this guards: `dark` running on one machine used to mark the
+    // unrelated `dark` state dir on another machine as active.
+    const raw = res(
+      [rw({ host: 'alpha', team_name: 'dark', target: 'dark:1' })],
+      [
+        team({ name: 'dark', host: 'alpha', tier: 'live', idle_seconds: 0 }),
+        team({ name: 'dark', host: 'beta', idle_seconds: 30 * 86400 }),
+      ]
+    );
+
+    const inactive = inactiveTeams(raw);
+    expect(inactive.map((t) => [t.host, t.name])).toEqual([['beta', 'dark']]);
+  });
+
+  it('attaches activity from the worker\'s own host', () => {
+    const raw = res(
+      [rw({ host: 'beta', team_name: 'voc', target: 'voc:1' })],
+      [
+        team({ name: 'voc', host: 'alpha', idle_seconds: 99 * 86400 }),
+        team({ name: 'voc', host: 'beta', idle_seconds: 2 * 86400 }),
+      ]
+    );
+
+    const t = transformRawStatus(raw)[0]!.teams[0]!;
+    expect(t.activity?.idleSeconds).toBe(2 * 86400);
   });
 });

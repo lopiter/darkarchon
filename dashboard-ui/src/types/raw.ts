@@ -91,6 +91,9 @@ export type RawTeamTier = 'live' | 'recent' | 'dormant' | 'stale' | 'empty';
  */
 export interface RawTeam {
   name: string;
+  /** Host that owns this state dir. A team name is only unique within a host,
+   *  so name alone cannot identify a team across the fleet. */
+  host: string;
   state_dir: string;
   /** Registered workers in workers-runtime.env (not necessarily running). */
   workers: number;

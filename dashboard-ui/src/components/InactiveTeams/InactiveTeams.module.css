@@ -35,7 +35,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 4.5rem 9rem 5.5rem 3.5rem;
+  grid-template-columns: minmax(0, 1.4fr) 4.5rem 9rem 5.5rem 3.5rem;
   gap: 12px;
   align-items: baseline;
   color: var(--text-tertiary);
@@ -45,6 +45,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.host {
+  opacity: 0.45;
 }
 
 .tier {
