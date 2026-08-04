@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RawStatusResponse, RawTeam, RawWorker } from '../types/raw';
+import { archiveCommand } from '../components/InactiveTeams/InactiveTeams';
+import type { InactiveTeam } from '../types/domain';
 import { inactiveTeams, transformRawStatus } from './transform';
 
 const TS = '2026-05-23T15:00:00Z';
@@ -143,5 +145,36 @@ describe('team identity across hosts', () => {
 
     const t = transformRawStatus(raw)[0]!.teams[0]!;
     expect(t.activity?.idleSeconds).toBe(2 * 86400);
+  });
+});
+
+describe('archiveCommand', () => {
+  const t = (over: Partial<InactiveTeam> = {}): InactiveTeam => ({
+    name: 'perf', host: 'alpha', stateDir: '/Users/u/.darkarchon/perf',
+    tier: 'dormant', idleSeconds: 100, source: 'dispatch',
+    registeredWorkers: 2, sizeBytes: 1024, ...over,
+  });
+
+  it('passes absolute state dirs, not team names', () => {
+    // A worktree team named `myteam-feature-x` lives at `myteam/feature-x`,
+    // so the name alone cannot locate it.
+    const cmd = archiveCommand([
+      t({ name: 'myteam-feature-x', stateDir: '/Users/u/.darkarchon/myteam/feature-x' }),
+    ]);
+    expect(cmd).toContain("'/Users/u/.darkarchon/myteam/feature-x'");
+    expect(cmd).not.toContain('myteam-feature-x');
+  });
+
+  it('archives several teams in one command', () => {
+    const cmd = archiveCommand([t(), t({ name: 'voc', stateDir: '/s/voc' })]);
+    expect(cmd).toBe(
+      "$DARKARCHON_HOME/lib/teams.sh archive '/Users/u/.darkarchon/perf' '/s/voc'"
+    );
+  });
+
+  it('does not auto-confirm', () => {
+    // The script prints what it will move and asks; that prompt is the last
+    // check before a batch move, so the copied command must not skip it.
+    expect(archiveCommand([t()])).not.toContain('--yes');
   });
 });

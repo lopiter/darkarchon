@@ -41,6 +41,11 @@ def main() -> int:
     p.add_argument("--dormant-days", type=int, default=7)
     p.add_argument("--stale-days", type=int, default=30)
     p.add_argument("--tier", help="select: only teams in this tier")
+    p.add_argument(
+        "--inactive",
+        action="store_true",
+        help="select: every team with no worker running right now (any tier but 'live')",
+    )
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -51,6 +56,11 @@ def main() -> int:
     if args.command == "select":
         for r in rows:
             if args.tier and r["tier"] != args.tier:
+                continue
+            # 'inactive' is the dashboard's grouping: nothing is running in it.
+            # Age is beside the point — a team idle for an hour with every
+            # worker exited is as archivable as one idle for a month.
+            if args.inactive and r["tier"] == "live":
                 continue
             print(r["state_dir"])
         return 0

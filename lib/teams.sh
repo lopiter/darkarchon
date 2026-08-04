@@ -4,6 +4,7 @@
 #   teams.sh list [--json]        grade every team by last activity
 #   teams.sh archive <team>...    move specific teams out of the way
 #   teams.sh archive --stale      move every team graded 'stale'
+#   teams.sh archive --inactive   move every team with nothing running
 #
 # Archiving MOVES a state dir to $HOME/.<tool>-archive/<date>/ — it never
 # deletes. tasks.db carries a team's whole dispatch history, so an archived team
@@ -22,7 +23,7 @@ THRESHOLDS=(--root "$HOST_STATE_DIR"
             --stale-days "$TEAM_STALE_DAYS")
 
 usage() {
-    sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit "${1:-1}"
 }
 
@@ -93,28 +94,46 @@ case "$cmd" in
         assume_yes=0
         targets=()
         want_stale=0
+        want_inactive=0
         for arg in "$@"; do
             case "$arg" in
-                --yes|-y) assume_yes=1 ;;
-                --stale)  want_stale=1 ;;
-                -*)       echo "unknown flag: $arg" >&2; usage ;;
-                *)        targets+=("$arg") ;;
+                --yes|-y)   assume_yes=1 ;;
+                --stale)    want_stale=1 ;;
+                --inactive) want_inactive=1 ;;
+                -*)         echo "unknown flag: $arg" >&2; usage ;;
+                *)          targets+=("$arg") ;;
             esac
         done
 
         dirs=()
-        if [ "$want_stale" = "1" ]; then
+        # --inactive is the wider net: every team with nothing running, which is
+        # what the dashboard lists under "inactive teams". --stale is the subset
+        # that has also been quiet past TEAM_STALE_DAYS.
+        if [ "$want_inactive" = "1" ]; then
+            while IFS= read -r d; do
+                [ -n "$d" ] && dirs+=("$d")
+            done < <("${CLI[@]}" select "${THRESHOLDS[@]}" --inactive)
+        elif [ "$want_stale" = "1" ]; then
             while IFS= read -r d; do
                 [ -n "$d" ] && dirs+=("$d")
             done < <("${CLI[@]}" select "${THRESHOLDS[@]}" --tier stale)
         fi
+        # A target may be a team name, a path relative to the state root, or an
+        # absolute state dir. The last two matter for worktree teams: `feature-x`
+        # nested under `myteam` is NAMED `myteam-feature-x` but LIVES at
+        # `myteam/feature-x`, so a name alone cannot locate it. The dashboard
+        # copies the absolute path for exactly this reason.
         for t in "${targets[@]:-}"; do
             [ -z "$t" ] && continue
-            dirs+=("$HOST_STATE_DIR/$t")
+            case "$t" in
+                /*) dirs+=("$t") ;;
+                *)  dirs+=("$HOST_STATE_DIR/$t") ;;
+            esac
         done
 
         if [ "${#dirs[@]}" -eq 0 ]; then
             echo "nothing to archive."
+            [ "$want_inactive" = "1" ] && echo "(every team has a worker running)"
             [ "$want_stale" = "1" ] && echo "(no teams graded 'stale' at >${TEAM_STALE_DAYS}d)"
             exit 0
         fi
