@@ -65,7 +65,39 @@ def parse_registry_file(path: Path) -> dict:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    return parse_registry_text(text)
+    entries = parse_registry_text(text)
+    # Stamp the owning team's state dir on every entry. Worker names repeat
+    # across teams — nine of this machine's teams have a `homepage-backend` —
+    # so anything looking up that worker's heartbeat or hook state by name has
+    # to know which team's directory to look in.
+    for meta in entries.values():
+        meta["state_dir"] = str(path.parent)
+    return entries
+
+
+def read_scoped(reader, worker: dict, name: str, state_dirs):
+    """Read a per-worker file from the team that actually owns this worker.
+
+    Heartbeat and hook-state files are named after the worker, and worker names
+    are only unique within a team. Searching every team's directory by name
+    therefore picks up strangers: a worker busy in one team was reported as
+    awaiting input because a same-named worker in a team last touched 17 days
+    earlier had a stale `awaiting_user` file, and the search happened to reach
+    it first.
+
+    Registered workers carry the state dir they were registered in, so their
+    lookup is exact. Anything unregistered has no team to scope to and keeps
+    the old search — those are discovered panes, whose names are tmux targets
+    that match no file anyway.
+    """
+    own = worker.get("state_dir")
+    if own:
+        return reader(Path(own), name)
+    for sd in state_dirs:
+        found = reader(sd, name)
+        if found is not None:
+            return found
+    return None
 
 
 def _target_to_window_key(target: str) -> str:
@@ -138,6 +170,9 @@ def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
                     "external": meta.get("external", False),
                     "kind": "registered",
                     "spawned_by": meta.get("spawned_by", ""),
+                    # Which team registered this worker — the only directory
+                    # whose heartbeat/hook files describe THIS pane.
+                    "state_dir": meta.get("state_dir", ""),
                 }
             )
         else:

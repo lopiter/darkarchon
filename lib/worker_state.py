@@ -40,7 +40,7 @@ from lib.heartbeat import (  # noqa: E402
     read_heartbeat,
 )
 from lib.tmux_scanner import capture_pane  # noqa: E402
-from lib.worker_resolver import parse_registry_file  # noqa: E402
+from lib.worker_resolver import parse_registry_file, read_scoped  # noqa: E402
 
 # Canonical state vocabulary emitted by this resolver.
 #   dead                — worker gone (no session / heartbeat stale / pid dead /
@@ -261,11 +261,7 @@ def annotate_workers_with_hooks(workers: list[dict], *state_dirs: Path) -> list[
         if w.get("state") == "dead" or not name:
             out.append(enriched)
             continue
-        hook = None
-        for sd in state_dirs:
-            hook = read_hook_state(sd, name)
-            if hook is not None:
-                break
+        hook = read_scoped(read_hook_state, w, name, state_dirs)
         if hook is None:
             out.append(enriched)
             continue

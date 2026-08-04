@@ -4,6 +4,7 @@ The merge policy (synthesize) is pure and gets the bulk of the coverage; resolve
 is exercised with injected tmux/capture fns so no live tmux is needed.
 """
 
+import os
 import json
 import time
 
@@ -283,3 +284,65 @@ def test_annotate_untouched_without_hook_file(tmp_path):
     out = ws.annotate_workers_with_hooks(workers, tmp_path)
     assert out[0]["state"] == "busy"
     assert "state_source" not in out[0]
+
+
+def _states(state_dir, name, payload):
+    d = state_dir / "states"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{name}.json").write_text(json.dumps(payload))
+
+
+def test_hook_overlay_reads_only_the_worker_s_own_team(tmp_path):
+    """Worker names repeat across teams. A stale `awaiting_user` left by a
+    same-named worker in a team last touched weeks ago used to win, reporting a
+    busy worker as waiting for input."""
+    from lib.worker_state import annotate_workers_with_hooks
+
+    stale, own = tmp_path / "TTD", tmp_path / "small-star"
+    _states(stale, "homepage_backend",
+            {"state": "awaiting_user", "detail": "Claude is waiting for your input"})
+    _states(own, "homepage_backend", {"state": "busy", "detail": ""})
+
+    worker = {
+        "name": "homepage-backend", "state": "busy", "detail": "Newspapering…",
+        "state_dir": str(own),
+    }
+
+    # Stale dir deliberately searched first — that ordering is what exposed it.
+    out = annotate_workers_with_hooks([worker], stale, own)
+
+    assert out[0]["state"] == "busy"
+
+
+def test_hook_overlay_falls_back_when_the_worker_has_no_team(tmp_path):
+    """Discovered panes carry no registration, so they keep the old search."""
+    from lib.worker_state import annotate_workers_with_hooks
+
+    sd = tmp_path / "some-team"
+    _states(sd, "solo", {"state": "awaiting_user", "detail": "waiting"})
+    worker = {"name": "solo", "state": "idle", "detail": ""}
+
+    out = annotate_workers_with_hooks([worker], sd)
+
+    assert out[0]["state"] == "awaiting_user"
+
+
+def test_heartbeat_lookup_is_scoped_to_the_worker_s_team(tmp_path):
+    """Same collision on the liveness layer: a stale heartbeat from another
+    team's same-named worker would force a running pane to 'dead'."""
+    from lib.heartbeat import annotate_workers
+
+    stale, own = tmp_path / "TTD", tmp_path / "small-star"
+    for d, epoch in ((stale, time.time() - 30 * 86400), (own, time.time())):
+        hb = d / "heartbeats"
+        hb.mkdir(parents=True, exist_ok=True)
+        (hb / "homepage_backend.json").write_text(
+            json.dumps({"worker": "homepage-backend", "pid": os.getpid(),
+                        "last_seen_epoch": epoch})
+        )
+
+    worker = {"name": "homepage-backend", "state": "busy", "state_dir": str(own)}
+
+    out = annotate_workers([worker], stale, own)
+
+    assert out[0]["state"] == "busy"

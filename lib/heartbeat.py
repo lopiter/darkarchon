@@ -15,6 +15,8 @@ import os
 import time
 from pathlib import Path
 
+from .worker_resolver import read_scoped
+
 HEARTBEAT_STALE_SEC = 15
 
 
@@ -50,20 +52,17 @@ def heartbeat_age_sec(hb: dict | None, now: float | None = None) -> float | None
 
 
 def annotate_workers(workers: list[dict], *state_dirs: Path) -> list[dict]:
-    """Enrich worker dicts with heartbeat info and force dead state when
-    the heartbeat says so. Searches the given state_dirs in order for each
-    worker's heartbeat — lets the agent cover both its own team and
-    sibling worktree teams. Workers without any heartbeat file are left
-    alone (legacy / external-invited workers don't run our wrapper)."""
+    """Enrich worker dicts with heartbeat info and force dead state when the
+    heartbeat says so. A registered worker's heartbeat is read from the team
+    that registered it (see `read_scoped`) — same-named workers in other teams
+    would otherwise hand it their staleness and mark a running pane dead.
+    Workers without any heartbeat file are left alone (legacy /
+    external-invited workers don't run our wrapper)."""
     now = time.time()
     out: list[dict] = []
     for w in workers:
         name = w.get("name", "")
-        hb = None
-        for sd in state_dirs:
-            hb = read_heartbeat(sd, name)
-            if hb is not None:
-                break
+        hb = read_scoped(read_heartbeat, w, name, state_dirs)
         age = heartbeat_age_sec(hb, now)
         pid = (hb or {}).get("pid")
         alive = is_pid_alive(pid) if isinstance(pid, int) else None
