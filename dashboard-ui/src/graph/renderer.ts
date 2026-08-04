@@ -14,6 +14,7 @@
  */
 
 import type { WorkerState } from '../types/domain';
+import { formatPing } from '../utils/formatTime';
 import type { FlowBurst } from './flows';
 import { shouldDrawLineage, topologyKey, type GraphNode } from './layout';
 
@@ -620,20 +621,25 @@ export class GraphRenderer {
     const isDead = state === 'dead' || state === 'unknown';
     const isBusy = state === 'busy' || state === 'compacting';
     const awaiting = state.startsWith('awaiting_user:');
-    const sc = this.stateColor(state);
+    // Unreviewed result (unseenDone). While idle the whole node reads green;
+    // if the worker is already busy again only the ✓ glyph below remains.
+    const done = state === 'idle' && n.worker?.unseenDone === true;
+    const sc = done ? PAL.ok : this.stateColor(state);
     const stripe =
       n.kind !== 'worker' ? PAL.accent : n.worker?.isOrchestrator ? PAL.orch : sc;
 
     c.globalAlpha = isDead ? 0.45 : 1;
 
-    // glow
+    // glow — done gets a steady (non-pulsing) glow: results accumulate
+    // quietly, they don't clamor like awaiting/busy.
     let glow = 0;
     if (!this.reduceMotion) {
       if (isBusy) glow = 12 + 5 * Math.sin(t / 260 + n.y);
       else if (awaiting) glow = 10 + 7 * Math.sin(t / 420);
       else if (state === 'rate_limited') glow = 9 + 5 * Math.sin(t / 700);
-    } else if (isBusy || awaiting || state === 'rate_limited') {
-      glow = 9;
+      else if (done) glow = 7;
+    } else if (isBusy || awaiting || state === 'rate_limited' || done) {
+      glow = done ? 7 : 9;
     }
     if (this.selectedId === n.id) glow = Math.max(glow, 14);
 
@@ -681,6 +687,12 @@ export class GraphRenderer {
       c.fillStyle = PAL.warn;
       c.font = `700 12px ${MONO}`;
       c.fillText('?', dx + 7, dy - 6);
+    } else if (!isDead && n.worker?.unseenDone) {
+      // Same slot as the awaiting '?' — the amber question outranks it when
+      // both apply, since a blocked worker needs the human first.
+      c.fillStyle = PAL.ok;
+      c.font = `700 12px ${MONO}`;
+      c.fillText('✓', dx + 7, dy - 6);
     }
 
     // label
@@ -703,9 +715,12 @@ export class GraphRenderer {
       c.fillStyle = PAL.busy;
       c.fillText(this.clip(text, 30), x + 36, dy + 12);
     } else {
-      c.fillStyle = PAL.muted;
-      const sub =
-        n.kind === 'worker' ? `${n.sub} · ${STATE_LABEL[state]}` : n.sub;
+      c.fillStyle = done ? PAL.ok : PAL.muted;
+      const fin = n.worker?.finishedAtMs;
+      const stateText = done
+        ? `done${fin ? ` · ${formatPing(Date.now() - fin)}` : ''}`
+        : STATE_LABEL[state];
+      const sub = n.kind === 'worker' ? `${n.sub} · ${stateText}` : n.sub;
       c.fillText(this.clip(sub, 30), x + 36, dy + 12);
     }
 
