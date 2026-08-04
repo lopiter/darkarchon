@@ -1,8 +1,18 @@
+/*
+ * Hierarchy here comes from the grayscale ramp in tokens.css, never from
+ * opacity. Dimming an already-tertiary color composites it toward the page
+ * background: on the dark theme --text-tertiary (#666) at 0.45 lands near
+ * #333, which is about 1.6:1 against #0a0a0a — invisible rather than quiet.
+ * Each step below picks the token it actually wants.
+ */
+
 .section {
   margin-top: var(--space-host-gap, 32px);
   font-size: var(--size-team-label);
 }
 
+/* The only way into this section, and easy to overlook at the foot of the
+   page — kept a step brighter than the rows it opens. */
 .toggle {
   background: none;
   border: none;
@@ -11,12 +21,11 @@
   font: inherit;
   letter-spacing: 1.2px;
   text-transform: uppercase;
-  color: var(--text-tertiary);
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 
 .toggle:hover {
-  opacity: 1;
+  color: var(--text-secondary);
 }
 
 .list {
@@ -38,34 +47,37 @@
   grid-template-columns: minmax(0, 1.4fr) 4.5rem 9rem 5.5rem 3.5rem;
   gap: 12px;
   align-items: baseline;
-  color: var(--text-tertiary);
+  color: var(--text-meta);
 }
 
 .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-secondary);
 }
 
 .host {
-  opacity: 0.45;
+  color: var(--text-tertiary);
 }
 
 .tier {
-  opacity: 0.75;
+  color: var(--text-meta);
 }
 
+/* The rows worth acting on, so the one step of emphasis in the list goes
+   here rather than to a team that was already torn down cleanly. */
 .stale {
-  opacity: 1;
+  color: var(--text-muted);
 }
 
 .empty {
   font-style: italic;
+  color: var(--text-tertiary);
 }
 
 .age,
 .meta {
-  opacity: 0.6;
   white-space: nowrap;
 }
 
@@ -75,6 +87,5 @@
 
 .hint {
   margin: 8px 0 0;
-  opacity: 0.5;
   color: var(--text-tertiary);
 }
