@@ -15,7 +15,7 @@
 
 import type { WorkerState } from '../types/domain';
 import type { FlowBurst } from './flows';
-import { topologyKey, type GraphNode } from './layout';
+import { shouldDrawLineage, topologyKey, type GraphNode } from './layout';
 
 export interface RendererCallbacks {
   /** Worker card clicked → id; background clicked → null. */
@@ -499,8 +499,8 @@ export class GraphRenderer {
       const by = n.worker?.spawnedBy;
       if (!by) continue;
       const src = this.byName.get(by);
-      if (!src || src === n || src.id === n.parentId) continue;
-      const p = edgePoints(src, n);
+      if (!shouldDrawLineage(n, src)) continue;
+      const p = edgePoints(src!, n);
       c.beginPath();
       c.moveTo(p[0], p[1]);
       c.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);

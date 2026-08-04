@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Host, Worker, WorkerState } from '../types/domain';
-import { buildGraph, topologyKey } from './layout';
+import { buildGraph, shouldDrawLineage, topologyKey, type GraphNode } from './layout';
 
 function mkWorker(
   id: string,
@@ -101,5 +101,42 @@ describe('buildGraph', () => {
     expect(topologyKey(buildGraph([host('idle')]))).not.toBe(
       topologyKey(buildGraph([host('idle', true)]))
     );
+  });
+});
+
+describe('shouldDrawLineage', () => {
+  const node = (id: string, parentId: string | null): GraphNode =>
+    ({ id, kind: 'worker', label: id, sub: '', parentId, x: 0, y: 0, w: 0, h: 0 });
+
+  it('draws a link to a spawner in another team', () => {
+    // The case the link exists for: hermes drives orchestrators that each
+    // live in their own team, which the tree cannot show.
+    const orch = node('orch', 'team:voc');
+    const hermes = node('hermes', 'team:fleet');
+    expect(shouldDrawLineage(orch, hermes)).toBe(true);
+  });
+
+  it('skips a spawner that is already the tree parent', () => {
+    const worker = node('w', 'team:voc');
+    expect(shouldDrawLineage(worker, node('team:voc', 'host:a'))).toBe(false);
+  });
+
+  it('skips a sibling spawner under the same team', () => {
+    // A team node and its orchestrator worker often share a name, so a worker
+    // spawned by its own team's orchestrator resolved to the sibling and got a
+    // dashed link doubling back across the group it already sits in.
+    const websiteUi = node('website-ui', 'team:voc-2');
+    const orchestrator = node('voc-2', 'team:voc-2');
+    expect(shouldDrawLineage(websiteUi, orchestrator)).toBe(false);
+  });
+
+  it('skips an unresolved or self spawner', () => {
+    const w = node('w', 'team:voc');
+    expect(shouldDrawLineage(w, undefined)).toBe(false);
+    expect(shouldDrawLineage(w, w)).toBe(false);
+  });
+
+  it('still links two parentless roots', () => {
+    expect(shouldDrawLineage(node('a', null), node('b', null))).toBe(true);
   });
 });
