@@ -20,13 +20,18 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def running_hub():
+def running_hub(tmp_path, monkeypatch):
     from lib.hub_store import HostStateStore
 
     import dashboard
 
     store = HostStateStore(stale_after_seconds=60)
     dashboard.STORE = store  # inject test store
+    # Point the hub's own disk-reading paths at an empty dir. Without this the
+    # developer's real ~/.darkarchon leaks in and assigns teams from whatever
+    # registries and task history happen to be on the machine running the test.
+    monkeypatch.setattr(dashboard, "STATE_DIR", tmp_path / "team")
+    monkeypatch.setattr(dashboard, "STATE_ROOT", tmp_path)
 
     port = _free_port()
     server = ThreadingHTTPServer(("127.0.0.1", port), dashboard.Handler)
@@ -71,3 +76,82 @@ def test_get_status_returns_workers_from_all_hosts(running_hub):
         data = json.loads(resp.read())
     hosts = {w["host"] for w in data["workers"]}
     assert hosts == {"main-pc", "remote-pc"}
+
+
+def _post(url_base, host, payload):
+    req = urllib.request.Request(
+        f"{url_base}/api/hosts/{host}/state",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _team(name, **over):
+    row = {
+        "name": name,
+        "state_dir": f"/s/{name}",
+        "workers": 2,
+        "last_activity_at": "2026-06-01T00:00:00Z",
+        "last_activity_source": "dispatch",
+        "idle_seconds": 0,
+        "tier": "stale",
+        "size_bytes": 1024,
+    }
+    row.update(over)
+    return row
+
+
+def test_each_host_reports_its_own_team_index(running_hub):
+    """Only a host can see its own state dirs, so the index travels with the
+    report rather than being read off the hub's disk."""
+    url_base, _store = running_hub
+    _post(url_base, "alpha", {"workers": [], "teams": [_team("voc")]})
+    _post(url_base, "beta", {"workers": [], "teams": [_team("perf")]})
+
+    with urllib.request.urlopen(f"{url_base}/api/teams") as resp:
+        teams = json.loads(resp.read())["teams"]
+
+    assert {(t["host"], t["name"]) for t in teams} == {("alpha", "voc"), ("beta", "perf")}
+
+
+def test_same_team_name_on_two_hosts_keeps_its_own_age(running_hub):
+    """The bug this fixes: a team name matching a directory on another machine
+    used to inherit that stranger's age."""
+    url_base, _store = running_hub
+    _post(url_base, "alpha", {"workers": [], "teams": [_team("dark", last_activity_at="2026-08-01T00:00:00Z")]})
+    _post(url_base, "beta", {"workers": [], "teams": [_team("dark", last_activity_at="2026-01-01T00:00:00Z")]})
+
+    with urllib.request.urlopen(f"{url_base}/api/teams") as resp:
+        teams = {(t["host"], t["name"]): t for t in json.loads(resp.read())["teams"]}
+
+    assert teams[("alpha", "dark")]["idle_seconds"] < teams[("beta", "dark")]["idle_seconds"]
+
+
+def test_a_teamless_report_contributes_no_teams(running_hub):
+    """Agents predating the team index simply report none."""
+    url_base, _store = running_hub
+    _post(url_base, "legacy", {"workers": []})
+
+    with urllib.request.urlopen(f"{url_base}/api/teams") as resp:
+        assert json.loads(resp.read())["teams"] == []
+
+
+def test_liveness_is_scoped_to_the_reporting_host(running_hub):
+    """A live worker on one host must not mark the same-named team live on
+    another."""
+    url_base, _store = running_hub
+    _post(url_base, "alpha", {
+        "workers": [{"target": "voc:1.1", "name": "w", "state": "idle",
+                     "process": "claude", "cwd": "/"}],
+        "teams": [_team("voc")],
+    })
+    _post(url_base, "beta", {"workers": [], "teams": [_team("voc")]})
+
+    with urllib.request.urlopen(f"{url_base}/api/status") as resp:
+        teams = {(t["host"], t["name"]): t for t in json.loads(resp.read())["teams"]}
+
+    assert teams[("alpha", "voc")]["tier"] == "live"
+    assert teams[("beta", "voc")]["tier"] != "live"

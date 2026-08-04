@@ -36,8 +36,13 @@ export function InactiveTeams() {
       {open && (
         <div className={styles.list}>
           {teams.map((t) => (
-            <div key={t.stateDir} className={styles.row}>
-              <span className={styles.name}>{t.name}</span>
+            <div key={`${t.host}/${t.stateDir}`} className={styles.row}>
+              <span className={styles.name}>
+                {t.name}
+                {/* Same-named teams on different machines are unrelated, and
+                    both can appear here at once. */}
+                <span className={styles.host}> · {t.host}</span>
+              </span>
               <span className={`${styles.tier} ${styles[t.tier] ?? ''}`}>
                 {t.tier}
               </span>

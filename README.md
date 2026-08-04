@@ -180,7 +180,7 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **dispatch** — writes a task row to `tasks.db`, sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
-- **team index** (`lib/team_index.py`) — discovers every team state dir on the host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Shared by the hub, the agent, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
+- **team index** (`lib/team_index.py`) — discovers every team state dir on a host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Built by each agent for its own machine and reported upward, since a state dir is only visible to the host holding it. Shared by the agent, the hub, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
 - **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex.
 - **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
 
@@ -599,11 +599,14 @@ Defaults are fine on a single-LAN home network. The hub binds to `0.0.0.0` so ot
 
 One agent covers the whole machine, whatever `DARKARCHON_TEAM` the shell had — it scans all of tmux and sweeps every team under `~/.darkarchon/` for registry, heartbeat and hook state. Starting it again from a different team's shell is a no-op, not a second agent.
 
+The agent also builds its host's [team index](#team-lifecycle) and sends it up with the worker report. Only that host can see its own state dirs, so the index has to travel — a hub reading its own disk would leave every remote host's teams ungraded, and would hand a team's age to whichever *other* machine happened to have a directory of the same name. Teams are therefore identified by `(host, team)` throughout; two machines may each have an unrelated `voc`.
+
 ### What stays host-local (does NOT cross hosts)
 
 - `dispatch` (tmux-driven — sender's tmux can't reach the other host)
 - `mailbox` / `questions` (filesystem-based — each host has its own `$STATE_DIR`)
 - `tasks.db`, `heartbeats/`
+- team state dirs — each agent grades its own and reports the result; the hub never reads another machine's disk
 
 The hub only mirrors **what each agent reports about its own host**. Cross-host worker collaboration is currently a non-goal — workers are expected to operate on their host; the dashboard merely gives one observation point.
 

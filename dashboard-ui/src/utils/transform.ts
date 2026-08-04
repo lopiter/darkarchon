@@ -16,18 +16,11 @@ import type {
 /** Section 13 decision — the two-step distinction (stale → dead) is a later phase. */
 export const HOST_STALE_MS = 15_000;
 
-/**
- * Convert hub `/api/status` response into the UI domain tree.
- * Phase 3 integration: `setRawStatus(await fetch('/api/status').then(r => r.json()))`
- *
- * Notes:
- *   - Iteration order of `byHost` and `bucket.teams` preserves first-seen
- *     order from `raw.workers` (Map > plain object → no numeric-string
- *     auto-sort surprises like "1" jumping before "myteam").
- *   - Stale host (lastPingMs > HOST_STALE_MS) forces every worker inside
- *     to `dead` so sort/visuals match design intent without needing
- *     hostStale-aware sort logic.
- */
+/** Team identity across the fleet. Names repeat between hosts. */
+function teamKey(host: string, team: string): string {
+  return `${host}\u0000${displayTeam(team)}`;
+}
+
 function toActivity(t: RawTeam): TeamActivity {
   return {
     tier: t.tier,
@@ -50,19 +43,38 @@ function toActivity(t: RawTeam): TeamActivity {
  */
 export function inactiveTeams(raw: RawStatusResponse): InactiveTeam[] {
   if (!raw.teams) return [];
+  // Keyed by host too: a `voc` running on one machine says nothing about an
+  // abandoned `voc` on another, and both can be in this list at once.
   const active = new Set(
-    raw.workers.map((w) => displayTeam(w.team_name))
+    raw.workers.map((w) => teamKey(w.host, w.team_name))
   );
   return raw.teams
-    .filter((t) => !active.has(displayTeam(t.name)))
-    .map((t) => ({ name: t.name, stateDir: t.state_dir, ...toActivity(t) }))
+    .filter((t) => !active.has(teamKey(t.host, t.name)))
+    .map((t) => ({
+      name: t.name,
+      host: t.host,
+      stateDir: t.state_dir,
+      ...toActivity(t),
+    }))
     .sort((a, b) => (b.idleSeconds ?? -1) - (a.idleSeconds ?? -1));
 }
 
+/**
+ * Convert hub `/api/status` response into the UI domain tree.
+ * Phase 3 integration: `setRawStatus(await fetch('/api/status').then(r => r.json()))`
+ *
+ * Notes:
+ *   - Iteration order of `byHost` and `bucket.teams` preserves first-seen
+ *     order from `raw.workers` (Map > plain object → no numeric-string
+ *     auto-sort surprises like "1" jumping before "myteam").
+ *   - Stale host (lastPingMs > HOST_STALE_MS) forces every worker inside
+ *     to `dead` so sort/visuals match design intent without needing
+ *     hostStale-aware sort logic.
+ */
 export function transformRawStatus(raw: RawStatusResponse): Host[] {
   const refTs = new Date(raw.ts).getTime();
   const activityByTeam = new Map(
-    (raw.teams ?? []).map((t) => [displayTeam(t.name), toActivity(t)])
+    (raw.teams ?? []).map((t) => [teamKey(t.host, t.name), toActivity(t)])
   );
   type Bucket = { teams: Map<string, Worker[]>; lastSeenMs: number };
   const byHost: Map<string, Bucket> = new Map();
@@ -95,7 +107,7 @@ export function transformRawStatus(raw: RawStatusResponse): Host[] {
       teams: Array.from(bucket.teams.entries()).map(
         ([name, workers]): Team => ({
           name,
-          activity: activityByTeam.get(name),
+          activity: activityByTeam.get(teamKey(hostId, name)),
           workers: stale
             ? workers.map((w) => ({ ...w, state: 'dead' as WorkerState }))
             : workers,

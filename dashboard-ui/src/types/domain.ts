@@ -83,6 +83,9 @@ export interface TeamActivity {
 /** A team with no workers currently reporting — cleanup candidate. */
 export interface InactiveTeam extends TeamActivity {
   name: string;
+  /** Owning host — shown in the list because two hosts can have same-named
+   *  teams that have nothing to do with each other. */
+  host: string;
   stateDir: string;
 }
 

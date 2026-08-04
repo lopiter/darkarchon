@@ -33,7 +33,7 @@ sys.path.insert(0, str(HERE))
 
 from lib.tmux_scanner import scan_panes  # noqa: E402
 from lib.worker_resolver import parse_registry_file, resolve_workers  # noqa: E402
-from lib.team_index import discover_teams  # noqa: E402
+from lib.team_index import build_index, discover_teams  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
 from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
 
@@ -123,8 +123,16 @@ def report_once(cfg: AgentConfig) -> int:
     # Heartbeat liveness has the final say — a dead worker is dead regardless of
     # any stale hook state, so this runs AFTER the hook overlay.
     workers = annotate_workers(workers, *state_dirs)
+    # A host's state dirs are only visible to that host, so the team index has
+    # to be built here and carried up rather than read off the hub's own disk —
+    # otherwise a remote host's teams have no age at all, and one whose name
+    # happens to match a directory on the hub picks up that stranger's age.
+    # Tiering stays the hub's call (it owns the thresholds); these are facts.
+    teams = build_index(cfg.state_root)
     url = f"{cfg.hub_url.rstrip('/')}/api/hosts/{cfg.host_id}/state"
-    return _http_post_json(url, {"workers": workers}, timeout=cfg.request_timeout)
+    return _http_post_json(
+        url, {"workers": workers, "teams": teams}, timeout=cfg.request_timeout
+    )
 
 
 def run_loop(cfg: AgentConfig):

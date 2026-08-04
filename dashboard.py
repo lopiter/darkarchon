@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE))  # allow `from lib.xxx import ...`
 from lib.hub_store import HostStateStore  # noqa: E402
 from lib.sse import SseBroker  # noqa: E402
 from lib.task_store import TaskStore  # noqa: E402
-from lib.team_index import build_index, discover_teams  # noqa: E402
+from lib.team_index import classify, discover_teams, iso_to_epoch  # noqa: E402
 
 # Cache TaskStore instances by db path — sqlite connections are short-lived
 # per query but the schema-init is idempotent, so reusing the wrapper avoids
@@ -133,57 +133,58 @@ ACTIVE_DISPATCH_MAX_AGE_SEC = 300  # tasks older than this are treated as stale 
 TEAM_DORMANT_DAYS = 7
 TEAM_STALE_DAYS = 30
 
-# The team index walks every team's files (~50ms for 30 teams), far too slow to
-# repeat on each poll. Team aging moves on a scale of days, so serving it from a
-# short cache costs nothing in accuracy. Liveness is NOT cached — it is overlaid
-# per request from the host reports, which do change second to second.
-TEAM_INDEX_TTL_SEC = 30
-_team_index_cache: tuple[float, list] | None = None
 
-
-def _team_rows() -> list:
-    """Disk-derived team index, refreshed at most once per TEAM_INDEX_TTL_SEC."""
-    global _team_index_cache
-    now = time.monotonic()
-    if _team_index_cache and now - _team_index_cache[0] < TEAM_INDEX_TTL_SEC:
-        return _team_index_cache[1]
-    rows = build_index(
-        STATE_ROOT,
-        teams=_all_state_dirs(),
-        dormant_days=TEAM_DORMANT_DAYS,
-        stale_days=TEAM_STALE_DAYS,
-    )
-    _team_index_cache = (now, rows)
-    return rows
-
-
-def _live_team_names(workers: list) -> set:
-    """Teams that have at least one worker actually running.
+def _live_team_keys(workers: list) -> set:
+    """(host, team) pairs that have at least one worker actually running.
 
     A reported worker is not the same as a live one. Registry entries outlive
     their panes, so a team can report several workers and have every one of
     them dead — that team has not been touched since whenever those panes
     died, and grading it 'live' both overstates it and hides its real age.
+
+    Keyed by host as well as name because a team name is only unique within a
+    host; two machines can each have an unrelated `voc`.
     """
     return {
-        w["team_name"]
+        (w.get("host", ""), w["team_name"])
         for w in workers
         if w.get("team_name") and w.get("state") != "dead"
     }
 
 
-def _teams_payload(live_teams: set) -> list:
-    """Team index with liveness from this request's host reports layered on.
+def _teams_payload(live_keys: set) -> list:
+    """Every host's team index, aged and tiered at serve time.
 
-    Host reports can only ever promote a team to 'live'. An absent report is not
-    evidence of the opposite — /api/teams passes an empty set, and a heartbeat
-    is itself proof a worker is running — so a row the index already graded live
-    keeps that grade and simply ages out on the next cache refresh.
+    Rows arrive from the hosts that own the state dirs — the hub cannot read
+    another machine's disk, and reading its own would attribute those teams to
+    whichever host happens to share a directory name.
+
+    Hosts report facts (when a team was last active, by which signal); tiering
+    is applied here because the thresholds are the hub's configuration. Idle is
+    recomputed from the absolute timestamp rather than trusting the reported
+    figure, which would freeze if an agent stopped reporting.
     """
-    return [
-        {**row, "tier": "live"} if row["name"] in live_teams else dict(row)
-        for row in _team_rows()
-    ]
+    now = time.time()
+    out = []
+    for row in STORE.get_all_teams():
+        epoch = iso_to_epoch(row.get("last_activity_at"))
+        idle = None if epoch is None else max(0, int(now - epoch))
+        key = (row.get("host", ""), row["name"])
+        out.append(
+            {
+                **row,
+                "idle_seconds": idle,
+                "tier": classify(
+                    idle,
+                    is_live=key in live_keys,
+                    worker_count=row.get("workers", 0),
+                    dormant_days=TEAM_DORMANT_DAYS,
+                    stale_days=TEAM_STALE_DAYS,
+                ),
+            }
+        )
+    out.sort(key=lambda r: (r["idle_seconds"] is None, r["idle_seconds"] or 0))
+    return out
 
 
 def _team_names(state_dirs: list | None = None) -> set:
@@ -563,7 +564,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(workers, list):
                 self._send(400, "text/plain", b"workers must be a list")
                 return
-            events = list(STORE.update_host(host_id, workers))
+            teams = body.get("teams") or []
+            if not isinstance(teams, list):
+                self._send(400, "text/plain", b"teams must be a list")
+                return
+            events = list(STORE.update_host(host_id, workers, teams))
             for ev in events:
                 BROKER.publish(ev)
             self._send_json({"accepted": True, "events": len(events)})
@@ -665,7 +670,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "state_dir": str(STATE_DIR),
             "hosts": STORE.get_hosts(),
             "workers": workers,
-            "teams": _teams_payload(_live_team_names(workers)),
+            "teams": _teams_payload(_live_team_keys(workers)),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 

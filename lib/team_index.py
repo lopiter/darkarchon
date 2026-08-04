@@ -27,7 +27,7 @@ DEFAULT_STALE_DAYS = 30
 TIERS = ("live", "recent", "dormant", "stale", "empty")
 
 
-def _iso_to_epoch(ts: str | None) -> float | None:
+def iso_to_epoch(ts: str | None) -> float | None:
     if not ts:
         return None
     try:
@@ -115,7 +115,7 @@ def _newest_task(state_dir: Path) -> float | None:
     from .task_store import TaskStore
 
     try:
-        return _iso_to_epoch(TaskStore(state_dir / "tasks.db").last_activity_any())
+        return iso_to_epoch(TaskStore(state_dir / "tasks.db").last_activity_any())
     except Exception:
         return None
 
