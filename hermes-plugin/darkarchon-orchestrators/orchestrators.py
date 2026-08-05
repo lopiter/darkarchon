@@ -606,15 +606,44 @@ def _slack_notify(text: str) -> None:
         pass
 
 
-def _notify(message: str, slack_text: Optional[str] = None) -> None:
+def _origin_session_id() -> Optional[str]:
+    """Dashboard session that invoked the current tool call, or None.
+
+    Must be called from inside the tool call itself: hermes binds the id to
+    the turn thread as a ContextVar (HERMES_UI_SESSION_ID), and watcher
+    threads spawned later never inherit it. CLI runs (and hermes builds
+    without the gateway session context) return None — there is a single
+    conversation, so no routing is needed."""
+    try:
+        from gateway.session_context import get_session_env
+
+        return get_session_env("HERMES_UI_SESSION_ID", "") or None
+    except Exception:
+        return None
+
+
+def _notify(message: str, slack_text: Optional[str] = None,
+            session_id: Optional[str] = None) -> None:
     """Push a message into the hermes conversation (no-op outside hermes)
-    and, when slack_text is given, mirror a short form to Slack."""
+    and, when slack_text is given, mirror a short form to Slack.
+
+    session_id targets the dashboard session that started the run, so a
+    report never lands in a concurrently open sibling session. If that
+    session has been closed, hermes drops the message (the Slack mirror
+    above already went out)."""
     if slack_text:
         _slack_notify(slack_text)
     if _CTX is None:
         return
     try:
-        _CTX.inject_message(message)
+        if session_id is None:
+            _CTX.inject_message(message)
+        else:
+            try:
+                _CTX.inject_message(message, session_id=session_id)
+            except TypeError:
+                # hermes without per-session routing — deliver untargeted
+                _CTX.inject_message(message)
     except Exception:
         pass  # a broken notification must never take the watcher down
 
@@ -632,6 +661,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
     meta = _load_meta(run_id)
     if meta is None or meta.get("status") == "cancelled":
         return  # interrupted runs were cancelled deliberately — stay quiet
+    origin = meta.get("origin_session") or None
 
     if code is None:
         _notify(
@@ -640,6 +670,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
             f"Tell the user; suggest checking the employee's tmux session.",
             slack_text=(f":warning: *{meta.get('orchestrator')}* run {run_id} "
                         f"is stuck past every timeout cap — check its tmux session."),
+            session_id=origin,
         )
         return
 
@@ -658,6 +689,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
         slack_text=(f"{emoji} *{summary.get('orchestrator')}* — "
                     f"{summary.get('outcome')} (run {run_id})\n"
                     f"{result_preview[:300]}"),
+        session_id=origin,
     )
 
 
@@ -702,6 +734,9 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
         "status": "running",
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "log": str(_log_path(run_id)),
+        # Captured here, on the turn thread — the completion report must go
+        # back to the dashboard session that asked for this dispatch.
+        "origin_session": _origin_session_id(),
     }
     _save_meta(meta)
 
