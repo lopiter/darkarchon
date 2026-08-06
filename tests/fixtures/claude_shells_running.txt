@@ -1,0 +1,48 @@
+⏺ DONE-20260806-112443-7e4f-a1      
+
+  Cargo.toml의 package name은 herdr, version은 0.8.0입니다. 결과 파일에 기록 완료했습니다.
+                                                                                          
+✻ Sautéed for 16s                                                                         
+
+❯ Read /tmp/darkarchon-501/p-20260806-112819-6fc7.txt then Write final answer to /tmp/darkarchon-501/r-20260806-112819-6fc7-a1.txt then output DONE-20260806-112819-6fc7-a1      
+
+  Read 1 file, ran 1 shell command 
+                                   
+⏺ sleep 25를 백그라운드로 실행했습니다. 완료 알림이 오면 결과 파일을 작성하겠습니다.                                                                                             
+
+✻ Cogitated for 11s · 1 shell still running
+
+❯ Read /tmp/darkarchon-501/p-20260806-112819-6fc7.txt then Write final answer to /tmp/darkarchon-501/r-20260806-112819-6fc7-a2.txt then output DONE-20260806-112819-6fc7-a2      
+
+  Ran 2 shell commands 
+                       
+⏺ Background command "Sleep for 25 seconds" completed (exit code 0)                                                                                                              
+
+⏺ Write(/tmp/darkarchon-501/r-20260806-112819-6fc7-a2.txt)
+  ⎿  Wrote 2 lines to ../../../../tmp/darkarchon-501/r-20260806-112819-6fc7-a2.txt
+      1 DONE-20260806-112819-6fc7-a2                                                                                                                                             
+      2 slept                                                                     
+  ⎿  Allowed by auto mode classifier                      
+
+⏺ DONE-20260806-112819-6fc7-a2
+
+  sleep 25가 정상 종료(exit 0)되었고, 결과 파일에 "slept"를 기록 완료했습니다.
+                                                                              
+✻ Worked for 29s                                                              
+
+※ recap: I'm the herdr repo worker in the darkarchon team, handling dispatched tasks. All four dispatches are done, including the herdr codebase investigation and the sleep-25 
+  demo. Nothing pending; I'm idle waiting for the next dispatch. (disable recaps in /config)                                                                                    
+                                                                                                                                                                                
+❯ Read /tmp/darkarchon-501/p-20260806-134506-4e3d.txt then Write final answer to /tmp/darkarchon-501/r-20260806-134506-4e3d-a1.txt then output DONE-20260806-134506-4e3d-a1      
+
+  Read 1 file, ran 1 shell command 
+
+⏺ sleep 20을 백그라운드로 실행했습니다 (task ID: b9sa3ge1o). 완료 알림이 오면 결과 파일을 작성하겠습니다.                                                                        
+
+✻ Cooked for 18s · 1 shell still running                                                    
+                                                                                                                                                                                
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                                                                                                                                                                          
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [OMC#4.13.6] | 5h:23%(2h4m) wk:11%(5d13h) | thinking | session:169m | ctx:13% | 🔧34
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← 2 agents           

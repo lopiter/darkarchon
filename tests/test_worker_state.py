@@ -47,6 +47,41 @@ def test_stuck_busy_hook_self_heals_when_scrape_idle():
     assert r["source"] == "scrape(hook-stale)"
 
 
+def test_busy_hook_survives_idle_scrape_when_shell_still_running():
+    """Mid-turn foreground wait: the TUI renders '✻ Cogitated · 1 shell still
+    running' over an empty prompt (live capture 2026-08-06), which scrapes as
+    idle. A live busy hook must NOT be self-healed away — that was the window
+    where a second dispatch could clobber a working worker."""
+    r = ws.synthesize(
+        hook={"state": "busy", "detail": ""},
+        scrape={"state": "idle", "detail": "shell still running", "shells_running": True},
+        is_dead=False,
+    )
+    assert r["state"] == "busy"
+    assert r["source"] == "hook(shells-running)"
+
+
+def test_idle_hook_with_background_shell_stays_idle():
+    """Turn really ended (Stop fired) with a long-lived background shell (dev
+    server): still idle and dispatchable — the guard is busy-hook-only."""
+    r = ws.synthesize(
+        hook={"state": "idle", "detail": ""},
+        scrape={"state": "idle", "detail": "shell still running", "shells_running": True},
+        is_dead=False,
+    )
+    assert r["state"] == "idle"
+
+
+def test_no_hook_with_background_shell_stays_idle():
+    # invited/legacy worker without hooks: scrape verbatim, flag changes nothing.
+    r = ws.synthesize(
+        hook=None,
+        scrape={"state": "idle", "detail": "shell still running", "shells_running": True},
+        is_dead=False,
+    )
+    assert r["state"] == "idle"
+
+
 def test_hook_idle_with_typed_prompt_becomes_unsent():
     # user typed but hasn't hit Enter — hooks can't see the prompt line.
     r = ws.synthesize(
@@ -256,6 +291,119 @@ def test_resolve_hook_awaiting_overrides_idle_scrape(tmp_path):
     assert r["state"] == "awaiting_user"
     assert "Permission" in r["detail"]
     assert r["source"] == "hook"
+
+
+# ── wait_until ─────────────────────────────────────────────────────────────
+def _fake_clock():
+    """(monotonic_fn, sleep_fn) pair driven by sleep calls — no real waiting."""
+    t = {"now": 0.0}
+
+    def monotonic():
+        return t["now"]
+
+    def sleep(sec):
+        t["now"] += sec
+
+    return monotonic, sleep
+
+
+def test_wait_until_reached_after_polling(tmp_path):
+    seq = iter([
+        {"state": "busy", "target": "t:w"},
+        {"state": "busy", "target": "t:w"},
+        {"state": "idle", "target": "t:w"},
+    ])
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "w", tmp_path, {"idle"},
+        timeout=60, interval=2,
+        resolve_fn=lambda w: next(seq), sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "reached"
+    assert r["state"] == "idle"
+
+
+def test_wait_until_accepts_any_of_the_requested_states(tmp_path):
+    seq = iter([
+        {"state": "busy", "target": "t:w"},
+        {"state": "awaiting_permission", "target": "t:w"},
+    ])
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "w", tmp_path, {"idle", "awaiting_permission"},
+        timeout=60, interval=2,
+        resolve_fn=lambda w: next(seq), sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "reached"
+    assert r["state"] == "awaiting_permission"
+
+
+def test_wait_until_times_out(tmp_path):
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "w", tmp_path, {"idle"},
+        timeout=10, interval=3,
+        resolve_fn=lambda w: {"state": "busy", "target": "t:w"},
+        sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "timeout"
+    assert r["state"] == "busy"
+
+
+def test_wait_until_exits_early_on_dead_worker(tmp_path):
+    calls = {"n": 0}
+
+    def rf(w):
+        calls["n"] += 1
+        return {"state": "dead", "target": "t:w"}
+
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "w", tmp_path, {"idle"},
+        timeout=600, interval=2,
+        resolve_fn=rf, sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "dead"
+    assert calls["n"] == 1  # no pointless polling of a dead worker
+
+
+def test_wait_until_can_wait_for_dead_itself(tmp_path):
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "w", tmp_path, {"dead"},
+        timeout=60, interval=2,
+        resolve_fn=lambda w: {"state": "dead", "target": "t:w"},
+        sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "reached"
+
+
+def test_wait_until_unknown_worker_exits_immediately(tmp_path):
+    mono, slp = _fake_clock()
+    r, outcome = ws.wait_until(
+        "ghost", tmp_path, {"idle"},
+        timeout=600, interval=2,
+        resolve_fn=lambda w: {"state": "unknown", "target": None},
+        sleep_fn=slp, monotonic_fn=mono,
+    )
+    assert outcome == "unknown"
+
+
+# ── resolve routes gemini workers to the gemini detector ────────────────────
+def test_resolve_gemini_kind_uses_title_signal(tmp_path):
+    _write_registry(tmp_path, name="gem", kind="gemini")
+
+    def cap(target, with_ansi=False):
+        return "some gemini screen text\n"
+
+    r = ws.resolve(
+        "gem", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=cap,
+        title_fn=lambda t: "✦  Working… (repo)",
+    )
+    assert r["state"] == "busy"
+    assert r["kind"] == "gemini"
 
 
 # ── observer overlay ───────────────────────────────────────────────────────

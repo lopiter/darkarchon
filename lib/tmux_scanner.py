@@ -156,6 +156,19 @@ def list_llm_panes(
     return panes
 
 
+def capture_pane_title(target: str) -> str:
+    """Read the pane's OSC title (#{pane_title}) — one cheap tmux call.
+
+    Agent CLIs publish state here (live-verified 2026-08-06): codex prefixes a
+    braille spinner while working and sets "[ ! ] Action Required | <dir>" when
+    blocked on an approval; gemini toggles "◇  Ready (<dir>)" ↔
+    "✦  Working… (<dir>)". Claude Code's title does NOT toggle with state
+    (verified over 250+ sampled frames), so it is not a claude signal.
+    """
+    rc, out = _run_tmux(["tmux", "display-message", "-p", "-t", target, "#{pane_title}"])
+    return out.strip() if rc == 0 else ""
+
+
 def capture_pane(target: str, with_ansi: bool = False) -> str:
     """Capture pane content. Plain by default; -e (with ANSI escapes) when with_ansi=True."""
     args = ["tmux", "capture-pane", "-p", "-t", target]
@@ -222,7 +235,7 @@ def scan_panes(
         codex_proc = _looks_like_codex_candidate(p.process)
 
         if registered_kind == "codex":
-            state = classify_codex_state(plain, ansi)
+            state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "codex"
         elif registered_kind == "claude":
             state = classify_claude_state(plain, ansi)
@@ -231,14 +244,14 @@ def scan_panes(
             # Process is literally `codex` — trust it and use the codex detector.
             # (codex panes can briefly show none of the markers while booting;
             # the codex detector treats that as idle, which is safe.)
-            state = classify_codex_state(plain, ansi)
+            state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "codex"
         elif explicit:
             # User-marked window — trust the intent, route by which TUI is present.
             # Check codex first: its box-drawing `─` also satisfies has_claude_marker,
             # so a claude-first check would misroute codex panes.
             if has_codex_marker:
-                state = classify_codex_state(plain, ansi)
+                state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
                 effective_process = "codex"
             elif has_claude_marker:
                 state = classify_claude_state(plain, ansi)
@@ -251,7 +264,7 @@ def scan_panes(
             # Auto-discovered by process name — require a marker to avoid false
             # positives on unrelated node panes. Codex-first for the same `─` reason.
             if has_codex_marker:
-                state = classify_codex_state(plain, ansi)
+                state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
                 effective_process = "codex"
             elif has_claude_marker:
                 state = classify_claude_state(plain, ansi)
@@ -278,6 +291,7 @@ def scan_panes(
                 "focused": p.focused,
                 "state": state["state"],
                 "detail": state["detail"],
+                "shells_running": bool(state.get("shells_running")),
                 "recent_output": recent_output,
             }
         )

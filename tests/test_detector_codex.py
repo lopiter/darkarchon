@@ -72,3 +72,41 @@ def test_v135_busy_classified_busy(load_fixture):
     plain = load_fixture("codex_v135_busy.txt")
     result = classify_codex_state(plain, plain)
     assert result["state"] == "busy"
+
+
+# ── OSC pane-title signals (codex 0.141, live-verified 2026-08-06) ──────────
+# codex publishes state in the terminal title: a braille spinner prefix while
+# working ("⠦ tmp") and "[ ! ] Action Required | tmp" while blocked on an
+# approval prompt. tmux exposes it via #{pane_title}, which survives the user
+# scrolling the pane — so the title outranks screen text.
+
+def test_title_action_required_is_awaiting_permission(load_fixture):
+    plain = load_fixture("codex_idle.txt")  # screen looks idle behind the title
+    result = classify_codex_state(plain, plain, "[ ! ] Action Required | tmp")
+    assert result["state"] == "awaiting_permission"
+
+
+def test_title_braille_spinner_is_busy(load_fixture):
+    plain = load_fixture("codex_idle.txt")
+    result = classify_codex_state(plain, plain, "⠦ tmp")
+    assert result["state"] == "busy"
+
+
+def test_plain_title_falls_through_to_screen(load_fixture):
+    plain = load_fixture("codex_idle.txt")
+    result = classify_codex_state(plain, plain, "tmp")
+    assert result["state"] == "idle"
+
+
+def test_screen_approval_prompt_is_awaiting_permission(load_fixture):
+    """Approval box on screen ('Would you like to run …' / 'Press enter to
+    confirm or esc to cancel') must block dispatch even with no title."""
+    plain = load_fixture("codex_approval.txt")
+    result = classify_codex_state(plain, plain)
+    assert result["state"] == "awaiting_permission"
+
+
+def test_auth_error_preempts_action_required_title(load_fixture):
+    plain = load_fixture("codex_auth_error.txt")
+    result = classify_codex_state(plain, plain, "[ ! ] Action Required | tmp")
+    assert result["state"] == "error"

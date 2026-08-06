@@ -1,0 +1,23 @@
+╭───────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.141.0)            │
+│                                       │
+│ model:     gpt-5.5   /model to change │
+│ directory: /private/tmp               │
+╰───────────────────────────────────────╯
+  Tip: Press Tab to queue a message when a task is running; otherwise it sends immediately (except !).
+› Run the shell command `sleep 15 && echo done` and report the output.
+• Ran sleep 15 && echo done
+  └ done
+─────────────────────────────────────────────────────────────────────────────────
+• Output:
+  done
+─────────────────────────────────────────────────────────────────────────────────
+› Run the shell command `touch /Users/lopiter/codex-probe-test.txt` exactly as-is.
+• Running touch /Users/lopiter/codex-probe-test.txt
+  Would you like to run the following command?
+  Reason: This command writes outside the workspace. Do you want to allow creating /Users/lopiter/codex-probe-test.txt exactly as requested?
+  $ touch /Users/lopiter/codex-probe-test.txt
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `touch /Users/lopiter/codex-probe-test.txt` (p)
+  3. No, and tell Codex what to do differently (esc)
+  Press enter to confirm or esc to cancel

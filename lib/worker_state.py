@@ -33,13 +33,14 @@ if str(_ROOT) not in sys.path:
 
 from lib.detectors.claude import classify_claude_state  # noqa: E402
 from lib.detectors.codex import classify_codex_state  # noqa: E402
+from lib.detectors.gemini import classify_gemini_state  # noqa: E402
 from lib.heartbeat import (  # noqa: E402
     HEARTBEAT_STALE_SEC,
     heartbeat_age_sec,
     is_pid_alive,
     read_heartbeat,
 )
-from lib.tmux_scanner import capture_pane  # noqa: E402
+from lib.tmux_scanner import capture_pane, capture_pane_title  # noqa: E402
 from lib.worker_resolver import parse_registry_file, read_scoped  # noqa: E402
 
 # Canonical state vocabulary emitted by this resolver.
@@ -101,17 +102,28 @@ def _normalize_scrape_state(state: str) -> str:
     return "unsent" if state == "typed" else state
 
 
-def scrape_state(target: str, kind: str, capture_fn=capture_pane) -> dict:
-    """Capture the pane and classify via the kind-appropriate detector."""
+def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=capture_pane_title) -> dict:
+    """Capture the pane and classify via the kind-appropriate detector.
+
+    codex and gemini also read the pane's OSC title (#{pane_title}) — both set
+    state there (codex: braille spinner / "Action Required"; gemini:
+    "✦ Working…" / "◇ Ready"; live-verified 2026-08). Claude Code's title does
+    not toggle with state, so the claude detector ignores it.
+    """
     plain = capture_fn(target, with_ansi=False)
     ansi = capture_fn(target, with_ansi=True)
     if not plain and not ansi:
         return {"state": "unknown", "detail": "no pane capture"}
     if kind == "codex":
-        st = classify_codex_state(plain, ansi)
+        st = classify_codex_state(plain, ansi, title_fn(target))
+    elif kind == "gemini":
+        st = classify_gemini_state(plain, ansi, title_fn(target))
     else:
         st = classify_claude_state(plain, ansi)
-    return {"state": _normalize_scrape_state(st["state"]), "detail": st.get("detail", "")}
+    out = {"state": _normalize_scrape_state(st["state"]), "detail": st.get("detail", "")}
+    if st.get("shells_running"):
+        out["shells_running"] = True
+    return out
 
 
 # ── Pure merge policy ──────────────────────────────────────────────────────
@@ -127,6 +139,11 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         reads is a bare shell, which classifies as idle.
       - hook says busy but scrape sees idle/unsent → trust scrape. A missed Stop
         hook would otherwise pin the worker busy forever; scrape self-heals it.
+        EXCEPT when the scrape carries shells_running: a foreground wait on a
+        shell renders an idle-looking frame ("✻ Cogitated · 1 shell still
+        running" over an empty prompt) mid-turn, so a live busy hook wins there.
+        A worker whose turn really ended (Stop → hook idle) with a long-lived
+        background shell keeps counting as idle — this guard is busy-hook-only.
       - hook says idle but scrape sees unsent → user is typing (hooks can't see
         the prompt line) → unsent.
       - otherwise the hook is authoritative.
@@ -142,6 +159,12 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         return {"state": "dead", "detail": hook.get("detail", "") or "session ended",
                 "source": "hook"}
     if h == "busy" and s in ("idle", "unsent"):
+        if scrape.get("shells_running"):
+            return {
+                "state": "busy",
+                "detail": hook.get("detail", "") or "foreground shell still running",
+                "source": "hook(shells-running)",
+            }
         return {**scrape, "source": "scrape(hook-stale)"}
     if h == "idle" and s == "unsent":
         return {**scrape, "source": "scrape-overlay"}
@@ -205,6 +228,7 @@ def resolve(
     *,
     session_running_fn=_tmux_session_running,
     capture_fn=capture_pane,
+    title_fn=capture_pane_title,
     now: float | None = None,
 ) -> dict:
     """Resolve one worker's state. Returns {state, detail, source, worker,
@@ -228,7 +252,7 @@ def resolve(
     # Capture exact-match target so tmux's prefix matching can't hit a sibling
     # session ("myteam" resolving to "myteam-other").
     exact = f"={target}"
-    scrape = scrape_state(exact, kind, capture_fn) if session_up else {"state": "dead", "detail": reason}
+    scrape = scrape_state(exact, kind, capture_fn, title_fn) if session_up else {"state": "dead", "detail": reason}
     hook = read_hook_state(state_dir, worker_name) if not is_dead else None
 
     merged = synthesize(hook, scrape, is_dead)
@@ -242,6 +266,50 @@ def resolve(
         "detail": merged.get("detail", ""),
         "source": merged["source"],
     }
+
+
+# ── Wait-until primitive ───────────────────────────────────────────────────
+def wait_until(
+    worker_name: str,
+    state_dir: Path,
+    until: set[str],
+    *,
+    timeout: float = 600.0,
+    interval: float = 2.0,
+    resolve_fn=None,
+    sleep_fn=None,
+    monotonic_fn=None,
+) -> tuple[dict, str]:
+    """Poll resolve() until the worker reaches one of `until` states.
+
+    The orchestrator-side wait primitive (herdr's `agent wait --until STATUS`):
+    dispatch, then block on "idle or needs-a-human" instead of scraping panes
+    in a shell loop. Returns (last_resolved, outcome) where outcome is:
+      reached  — state ∈ until
+      timeout  — deadline hit; last_resolved holds the final observation
+      dead     — worker died and 'dead' was not an accepted state (early exit:
+                 nothing arrives on a dead worker except a respawn, which makes
+                 a fresh wait)
+      unknown  — worker not in the registry (early exit, waiting can't fix it)
+    """
+    import time as _time
+
+    resolve_fn = resolve_fn or (lambda w: resolve(w, state_dir))
+    sleep_fn = sleep_fn or _time.sleep
+    monotonic_fn = monotonic_fn or _time.monotonic
+
+    deadline = monotonic_fn() + timeout
+    while True:
+        r = resolve_fn(worker_name)
+        if r.get("target") is None:
+            return r, "unknown"
+        if r["state"] in until:
+            return r, "reached"
+        if r["state"] == "dead" and "dead" not in until:
+            return r, "dead"
+        if monotonic_fn() >= deadline:
+            return r, "timeout"
+        sleep_fn(interval)
 
 
 # ── Observer overlay (dashboard side) ──────────────────────────────────────
@@ -266,6 +334,8 @@ def annotate_workers_with_hooks(workers: list[dict], *state_dirs: Path) -> list[
             out.append(enriched)
             continue
         scrape_here = {"state": _normalize_scrape_state(w.get("state", "unknown")), "detail": w.get("detail", "")}
+        if w.get("shells_running"):
+            scrape_here["shells_running"] = True
         merged = synthesize(hook, scrape_here, is_dead=False)
         enriched["state"] = merged["state"]
         enriched["detail"] = merged.get("detail", "") or w.get("detail", "")
@@ -308,7 +378,24 @@ def main() -> int:
     p.add_argument("--json", action="store_true", help="emit JSON")
     p.add_argument("--field", help="print a single field's raw value (e.g. state)")
     p.add_argument("--verbose", "-v", action="store_true", help="append pane tail")
+    p.add_argument("--until", help="comma-separated states: poll until one is reached")
+    p.add_argument("--timeout", type=float, default=600.0, help="--until deadline in seconds (default 600)")
+    p.add_argument("--interval", type=float, default=2.0, help="--until poll interval in seconds (default 2)")
     args = p.parse_args()
+
+    if args.until:
+        until = {s.strip() for s in args.until.split(",") if s.strip()}
+        r, outcome = wait_until(
+            args.worker, _state_dir(), until,
+            timeout=args.timeout, interval=args.interval,
+        )
+        if args.json:
+            print(json.dumps({**r, "outcome": outcome}))
+        elif args.field:
+            print(r.get(args.field, "") or "")
+        else:
+            print(f"outcome={outcome} {_format_kv(r)}")
+        return {"reached": 0, "unknown": 1, "timeout": 2, "dead": 3}[outcome]
 
     r = resolve(args.worker, _state_dir())
 
