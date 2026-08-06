@@ -155,6 +155,26 @@ checked_dispatch() {
         fi
     fi
 
+    # ─── Idle debounce ──────────────────────────────────────────────────────
+    # A single snapshot can catch the worker between spinner frames, or in the
+    # gap between a Stop hook and the background-task notification that
+    # re-invokes it. Require IDLE_CONFIRMS consecutive idle resolves (spaced
+    # IDLE_CONFIRM_INTERVAL apart) before trusting idle — herdr's working→idle
+    # debounce, ported. Any non-idle observation falls through to the normal
+    # refusal handling below with the freshly observed state.
+    local confirms="${IDLE_CONFIRMS:-3}"
+    if [ "$state" = "idle" ] && [ "$confirms" -gt 1 ]; then
+        local c
+        for c in $(seq 2 "$confirms"); do
+            sleep "${IDLE_CONFIRM_INTERVAL:-0.4}"
+            state="$(resolve_field "$WORKER" state)"
+            if [ "$state" != "idle" ]; then
+                detail="$(resolve_field "$WORKER" detail)"
+                break
+            fi
+        done
+    fi
+
     case "$state" in
         busy|compacting|rate_limited)
             echo "REFUSED: worker '$WORKER' ($TARGET) is $state." >&2

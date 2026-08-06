@@ -17,8 +17,18 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # `still running` used to be matched here too, but it false-positived on
 # Claude's "* Cooked for 27s · 2 shells still running" status line, which
 # means the response is *done* and only background shells are alive
-# (Claude itself is accepting prompts — idle).
+# (Claude itself is accepting prompts — idle). It is now reported as a
+# separate `shells_running` flag instead of busy: the resolver uses it to
+# stop a live hook=busy from being self-healed to idle (a foreground wait
+# on a shell can render exactly this frame mid-turn), while a hook=idle
+# worker with a long-lived background shell (dev server) still counts as
+# idle and stays dispatchable.
 BUSY_PATTERN = re.compile(r"[A-Za-z]+ing…|중\s*…")  # "중 …" = Korean "…-ing" progress marker (functional — keep)
+# Live status suffix "· N shell(s) still running". Only meaningful in the
+# activity area right above the prompt separator — the same text lingers in
+# scrollback long after the shells exit, so it must never be searched
+# screen-wide (verified on live captures: every frame of a session matched).
+SHELLS_RUNNING_PATTERN = re.compile(r"\d+\s+shells?\s+still running")
 # Compacting matches BUSY too — check first so it doesn't get classified as busy.
 COMPACT_PATTERN = re.compile(r"[Cc]ompacting…|compact.*in progress|/compact\s")
 RATE_LIMIT_PATTERN = re.compile(
@@ -58,6 +68,7 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
                 sep_idx = i
                 break
 
+    shells_running = False
     if sep_idx is not None and sep_idx >= 1:
         activity = [lines[i] for i in range(max(0, sep_idx - 5), sep_idx) if lines[i].strip()]
         recent = "\n".join(activity[-2:])
@@ -66,6 +77,7 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
         m = BUSY_PATTERN.search(recent)
         if m:
             return {"state": "busy", "detail": m.group()}
+        shells_running = bool(SHELLS_RUNNING_PATTERN.search(recent))
     else:
         # No clear prompt structure — fall back to checking last non-blank lines
         nonblank = [ln for ln in lines if ln.strip()]
@@ -73,6 +85,7 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
         m = BUSY_PATTERN.search(tail)
         if m:
             return {"state": "busy", "detail": m.group()}
+        shells_running = bool(SHELLS_RUNNING_PATTERN.search(tail))
 
     # Typed-but-unsent? Use ANSI capture to distinguish placeholder (dim) vs user input.
     for line in reversed(capture_with_ansi.splitlines()):
@@ -82,7 +95,11 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
             if plain_after:
                 if not DIM_ESCAPE.search(after):
                     detail = plain_after[:80] + ("…" if len(plain_after) > 80 else "")
-                    return {"state": "typed", "detail": detail}
+                    return {"state": "typed", "detail": detail, "shells_running": shells_running}
             break
 
-    return {"state": "idle", "detail": ""}
+    return {
+        "state": "idle",
+        "detail": "shell still running" if shells_running else "",
+        "shells_running": shells_running,
+    }

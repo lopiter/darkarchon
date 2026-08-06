@@ -1,0 +1,10 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────╮
+ │ Do you trust this folder?                                                                │
+ │ Trusting a folder allows Gemini to execute commands it suggests. This is a security      │
+ │ feature to prevent accidental execution in untrusted directories.                        │
+ │                                                                                          │
+ │ ● 1. Trust folder (tmp)                                                                  │
+ │   2. Trust parent folder (private)                                                       │
+ │   3. Don't trust                                                                         │
+ │                                                                                          │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────╯
