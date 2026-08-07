@@ -622,28 +622,59 @@ def _origin_session_id() -> Optional[str]:
         return None
 
 
+def _origin_session_key() -> Optional[str]:
+    """Durable key of the conversation that invoked the current tool call.
+
+    Captured alongside _origin_session_id() and for the same reason (the
+    ContextVar is bound to the turn thread only), but it outlives the live
+    session: when a remote desktop's connection drops, hermes reaps the live
+    session while the conversation itself survives and returns under a new
+    UI id. A dispatch that outlasts the connection can only be reported back
+    by this key — see _notify()."""
+    try:
+        from gateway.session_context import get_session_env
+
+        return get_session_env("HERMES_SESSION_KEY", "") or None
+    except Exception:
+        return None
+
+
 def _notify(message: str, slack_text: Optional[str] = None,
-            session_id: Optional[str] = None) -> None:
+            session_id: Optional[str] = None,
+            session_key: Optional[str] = None) -> None:
     """Push a message into the hermes conversation (no-op outside hermes)
     and, when slack_text is given, mirror a short form to Slack.
 
     session_id targets the dashboard session that started the run, so a
-    report never lands in a concurrently open sibling session. If that
-    session has been closed, hermes drops the message (the Slack mirror
-    above already went out)."""
+    report never lands in a concurrently open sibling session. session_key
+    is the durable handle for that same conversation: dispatches routinely
+    outlive a remote client's connection, and once the live session has been
+    reaped the key is the only thing that still identifies where the report
+    belongs — hermes delivers on it, or holds the report until the
+    conversation comes back. Older hermes builds accept neither; the report
+    then goes untargeted, and the Slack mirror above has already gone out
+    either way."""
     if slack_text:
         _slack_notify(slack_text)
     if _CTX is None:
         return
     try:
-        if session_id is None:
+        if session_id is None and session_key is None:
             _CTX.inject_message(message)
-        else:
-            try:
-                _CTX.inject_message(message, session_id=session_id)
-            except TypeError:
-                # hermes without per-session routing — deliver untargeted
-                _CTX.inject_message(message)
+            return
+        try:
+            _CTX.inject_message(
+                message, session_id=session_id, session_key=session_key
+            )
+            return
+        except TypeError:
+            pass
+        try:
+            _CTX.inject_message(message, session_id=session_id)
+            return
+        except TypeError:
+            # hermes without per-session routing — deliver untargeted
+            _CTX.inject_message(message)
     except Exception:
         pass  # a broken notification must never take the watcher down
 
@@ -662,6 +693,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
     if meta is None or meta.get("status") == "cancelled":
         return  # interrupted runs were cancelled deliberately — stay quiet
     origin = meta.get("origin_session") or None
+    origin_key = meta.get("origin_session_key") or None
 
     if code is None:
         _notify(
@@ -671,6 +703,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
             slack_text=(f":warning: *{meta.get('orchestrator')}* run {run_id} "
                         f"is stuck past every timeout cap — check its tmux session."),
             session_id=origin,
+            session_key=origin_key,
         )
         return
 
@@ -690,6 +723,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
                     f"{summary.get('outcome')} (run {run_id})\n"
                     f"{result_preview[:300]}"),
         session_id=origin,
+        session_key=origin_key,
     )
 
 
@@ -737,6 +771,7 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
         # Captured here, on the turn thread — the completion report must go
         # back to the dashboard session that asked for this dispatch.
         "origin_session": _origin_session_id(),
+        "origin_session_key": _origin_session_key(),
     }
     _save_meta(meta)
 
