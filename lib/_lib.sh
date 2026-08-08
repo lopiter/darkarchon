@@ -355,3 +355,51 @@ workers_sharing_dir() {
         fi
     done | sort -u
 }
+
+# peer_post <worker> <from> <body> — deliver <body> straight into a claude
+# worker's session over its Claude Code cross-session messaging socket, the
+# path state-hook.sh records in states/<safe>.json from
+# CLAUDE_CODE_MESSAGING_SOCKET. Returns non-zero when the worker has no
+# recorded socket or the post fails, so callers can fall back to tmux
+# send-keys. Only claude workers ever have a socket (the hook records it);
+# codex and invited/EXTERNAL workers fail the state-file check and fall back.
+#
+# Wire format (Claude Code v2.1.224+): one JSON object per newline-terminated
+# line — {"type":"user","message":{"content":...},"from":...}. session_id is
+# included when known: the receiver drops a message whose session_id isn't its
+# own, so a socket path recycled by an unrelated session (pids are reused)
+# can't have another team's trigger injected into it.
+peer_post() {
+    local to="$1" from="$2" body="$3"
+    local sf="$STATE_DIR/states/$(safe_name "$to").json"
+    [ -f "$sf" ] || return 1
+    PEER_STATE_FILE="$sf" PEER_FROM="$from" PEER_BODY="$body" \
+    python3 - <<'PY' 2>/dev/null
+import json, os, socket, sys, time
+
+try:
+    st = json.load(open(os.environ["PEER_STATE_FILE"]))
+except Exception:
+    sys.exit(1)
+path = st.get("messaging_socket") if isinstance(st, dict) else None
+if not path:
+    sys.exit(1)
+msg = {
+    "type": "user",
+    "message": {"content": os.environ.get("PEER_BODY", "")},
+    "from": os.environ.get("PEER_FROM") or "darkarchon",
+}
+if st.get("session_id"):
+    msg["session_id"] = st["session_id"]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2)
+try:
+    s.connect(path)
+    s.sendall((json.dumps(msg) + "\n").encode())
+    # macOS peer-pid checks only work while the posting process is alive, so
+    # linger briefly instead of exiting on the heels of the write.
+    time.sleep(0.5)
+finally:
+    s.close()
+PY
+}

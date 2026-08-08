@@ -60,11 +60,18 @@ drained_path() { echo "$MAILBOX_DIR/$1.drained.jsonl"; }
 # The message is already on disk at this point; the trigger is only a hint, so
 # a dead pane or an over-long trigger is not an error. Recovery for a trigger
 # that never lands is `outstanding` + `renotify`.
+#
+# Claude workers get the trigger over their messaging socket (peer_post) when
+# one is recorded: it queues while the worker is mid-turn instead of typing
+# into its prompt, and can't collide with a user attached to the pane. Codex
+# workers, invited/EXTERNAL workers, and any claude session without the
+# feature keep the tmux send-keys path.
 notify() {
     local to="$1" from="$2" target trigger
+    trigger="MAILBOX_NOTIFY from=${from} count_with: ${HERE}/mailbox.sh count ${to}"
+    peer_post "$to" "$from" "$trigger" && return 0
     target="$(worker_target "$to")"
     [ -z "$target" ] && return 0
-    trigger="MAILBOX_NOTIFY from=${from} count_with: ${HERE}/mailbox.sh count ${to}"
     [ "${#trigger}" -gt 199 ] && return 0
     tmux has-session -t "=${target%%:*}" 2>/dev/null || return 0
     # -l --: send the text literally, so a body-derived trigger could never be
