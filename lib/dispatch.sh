@@ -204,8 +204,14 @@ build_trigger() {
 build_trigger
 
 # send_trigger — deliver the short "go" line to the worker. Kind-specific only
-# in HOW keys are sent; the payload is identical. Called once up front and once
+# in HOW it travels; the payload is identical. Called once up front and once
 # more as a nudge if the worker ends its turn without producing a result.
+#
+# claude workers with a recorded messaging socket get the trigger via peer_post:
+# it can't collide with a user attached to the pane, and a socket-delivered
+# message still runs the UserPromptSubmit hook, so the poll loop's busy/idle
+# detection below sees the same transitions as a typed trigger. Codex workers
+# and claude sessions without a socket keep the send-keys path.
 send_trigger() {
     if [ "$KIND" = "codex" ]; then
         # codex needs literal mode: `-l` stops tmux interpreting words like "Enter"
@@ -217,6 +223,8 @@ send_trigger() {
         tmux send-keys -t "=$TARGET" Enter
         sleep 0.2
         tmux send-keys -t "=$TARGET" Enter
+    elif peer_post "$WORKER" "${DISPATCHED_BY:-darkarchon-dispatch}" "$TRIGGER"; then
+        :
     else
         tmux send-keys -t "=$TARGET" "$TRIGGER"
         sleep 0.6
