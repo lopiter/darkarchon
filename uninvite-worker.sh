@@ -33,7 +33,6 @@ if ! worker_is_external "$NAME"; then
     exit 1
 fi
 
-SAFE="$(safe_name "$NAME")"
 RT="$STATE_DIR/workers-runtime.env"
 if [ ! -f "$RT" ]; then
     echo "ERROR: runtime registry not found at $RT" >&2
@@ -41,28 +40,11 @@ if [ ! -f "$RT" ]; then
 fi
 
 # Strip under a lock so a concurrent spawn/invite isn't lost by the rewrite.
-_strip_invited_from_registry() {
-    local tmp="$RT.tmp.$$"
-    awk -v sn="$SAFE" '
-        BEGIN { drop_comment = 0 }
-        /^# (spawned|invited) / { last_comment = $0; drop_comment = 0; next }
-        $0 ~ ("^WORKER_" sn "_") {
-            drop_comment = 1
-            next
-        }
-        {
-            if (last_comment != "" && drop_comment == 0) print last_comment
-            last_comment = ""
-            drop_comment = 0
-            print
-        }
-        END {
-            if (last_comment != "" && drop_comment == 0) print last_comment
-        }
-    ' "$RT" > "$tmp"
-    mv "$tmp" "$RT"
+_uninvite() {
+    worker_tombstone_write "$NAME" "uninvited"
+    registry_strip_worker "$NAME"
 }
-with_registry_lock _strip_invited_from_registry
+with_registry_lock _uninvite
 
 echo "Uninvited worker '$NAME' (was: $TARGET)"
 echo "  tmux pane left untouched (external — user-owned)"

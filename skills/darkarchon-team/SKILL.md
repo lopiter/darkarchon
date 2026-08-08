@@ -126,11 +126,30 @@ $DARKARCHON_HOME/dispatch-safe.sh [--force] <name> '<task description>'
 
 **Remove / stop:**
 ```bash
-$DARKARCHON_HOME/uninvite-worker.sh <name>     # unregister an invited worker (pane untouched)
-$DARKARCHON_HOME/lib/kill-worker.sh <name>     # close a spawned worker's window (refuses EXTERNAL)
-$DARKARCHON_HOME/lib/start.sh                  # spawn the fixed roster from config.env WORKERS=()
-$DARKARCHON_HOME/lib/stop.sh                   # kill the team's tmux session
+$DARKARCHON_HOME/uninvite-worker.sh <name>       # unregister an invited worker (pane untouched)
+$DARKARCHON_HOME/lib/deregister-worker.sh <name> # unregister ANY worker, pane untouched (refuses a live one)
+$DARKARCHON_HOME/lib/kill-worker.sh <name>       # close a spawned worker's window (refuses EXTERNAL)
+$DARKARCHON_HOME/prune-workers.sh                # drop every dead registration (never kills a window)
+$DARKARCHON_HOME/lib/start.sh                    # spawn the fixed roster from config.env WORKERS=()
+$DARKARCHON_HOME/lib/stop.sh                     # kill the team's tmux session
 ```
+
+**Bring a dead worker back** ("다시 불러줘", "복구해줘", worker shows `dead`):
+```bash
+$DARKARCHON_HOME/revive-worker.sh <name>           # respawn in a NEW window with its conversation (claude --resume)
+$DARKARCHON_HOME/revive-worker.sh <name> --fresh   # clean replacement; reads the departing worker's handover note
+$DARKARCHON_HOME/revive-worker.sh <name> --adopt   # register the agent already running in its old pane
+$DARKARCHON_HOME/revive-worker.sh <name> --dry-run # show the plan first
+```
+- Pick `--fresh` when the worker was killed **because its context filled up** —
+  `--resume` restores that full context and it hits the wall again immediately.
+  Plain revive is for reboots and accidental kills.
+- If `check-worker-state.sh` reports `orphaned=1`, someone relaunched their own
+  claude in that window. **Never** `kill-worker.sh` it — that destroys a live
+  session the user is working in. Revive into a new window, or `--adopt` it.
+- A revived worker is a new process: charter, hooks, heartbeat and MCP tools are
+  reattached. A pane the user relaunched by hand has none of those, which is why
+  `--adopt` is the degraded option, not the default.
 
 **Inspect history:**
 ```bash

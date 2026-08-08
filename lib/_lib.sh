@@ -118,6 +118,135 @@ worker_is_external() {
     [ "${!var:-0}" = "1" ]
 }
 
+# worker_window_id <name>  -> echoes WORKER_<safe_name>_WINDOW_ID or empty.
+# tmux's immutable handle for the worker's window; absent in pre-WINDOW_ID
+# registrations.
+worker_window_id() {
+    local sn
+    sn="$(safe_name "$1")"
+    local var="WORKER_${sn}_WINDOW_ID"
+    echo "${!var:-}"
+}
+
+# worker_session <name>  -> the dedicated host session recorded at spawn time
+# (only set when spawn-worker.sh was given --session), else the session part of
+# the registered target. This is the session a respawn must land in.
+worker_session() {
+    local sn target
+    sn="$(safe_name "$1")"
+    local var="WORKER_${sn}_SESSION"
+    if [ -n "${!var:-}" ]; then
+        echo "${!var}"
+        return 0
+    fi
+    target="$(worker_target "$1")"
+    echo "${target%%:*}"
+}
+
+# worker_tombstone_path <name> — where a departed worker's recall record lives.
+worker_tombstone_path() {
+    echo "$STATE_DIR/departed/$(safe_name "$1").json"
+}
+
+# worker_tombstone_write <name> <reason> — snapshot everything needed to bring
+# this worker back, BEFORE its registration is deleted.
+#
+# Deregistering frees the name, which is the point, but it also throws away the
+# cwd/role/kind that a respawn needs — leaving "invite them back later" as a
+# game of remembering which directory that worker lived in. The Claude session
+# id survives on its own (states/<safe>.json outlives the registration), so the
+# tombstone completes the picture: identity here, conversation there.
+#
+# Best-effort by design: a failed snapshot must never block the removal it
+# precedes.
+worker_tombstone_write() {
+    local name="$1" reason="${2:-}"
+    local dir="$STATE_DIR/departed"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    local ext=0
+    worker_is_external "$name" && ext=1
+    local sn
+    sn="$(safe_name "$name")"
+    local spawned_by_var="WORKER_${sn}_SPAWNED_BY"
+    TOMB_NAME="$name" \
+    TOMB_REASON="$reason" \
+    TOMB_TARGET="$(worker_target "$name")" \
+    TOMB_WINDOW_ID="$(worker_window_id "$name")" \
+    TOMB_DIR="$(worker_dir "$name")" \
+    TOMB_ROLE="$(worker_role "$name")" \
+    TOMB_KIND="$(worker_kind "$name")" \
+    TOMB_SESSION="$(worker_session "$name")" \
+    TOMB_EXTERNAL="$ext" \
+    TOMB_SPAWNED_BY="${!spawned_by_var:-}" \
+    TOMB_OUT="$dir/$sn.json" \
+    TOMB_STATE_FILE="$STATE_DIR/states/$sn.json" \
+    python3 - <<'PY' 2>/dev/null || true
+import json, os, time
+
+out = os.environ["TOMB_OUT"]
+rec = {
+    "name": os.environ.get("TOMB_NAME", ""),
+    "reason": os.environ.get("TOMB_REASON", ""),
+    "target": os.environ.get("TOMB_TARGET", ""),
+    "window_id": os.environ.get("TOMB_WINDOW_ID", ""),
+    "cwd": os.environ.get("TOMB_DIR", ""),
+    "role": os.environ.get("TOMB_ROLE", ""),
+    "kind": os.environ.get("TOMB_KIND", "claude"),
+    "session": os.environ.get("TOMB_SESSION", ""),
+    "external": os.environ.get("TOMB_EXTERNAL", "0") == "1",
+    "spawned_by": os.environ.get("TOMB_SPAWNED_BY", ""),
+    "departed_at": int(time.time()),
+}
+# The conversation's forwarding address, recorded by the state hook.
+try:
+    with open(os.environ.get("TOMB_STATE_FILE", "")) as fh:
+        prev = json.load(fh)
+    if isinstance(prev, dict) and prev.get("session_id"):
+        rec["session_id"] = prev["session_id"]
+except Exception:
+    pass
+tmp = out + ".tmp." + str(os.getpid())
+with open(tmp, "w") as fh:
+    json.dump(rec, fh)
+os.replace(tmp, out)
+PY
+}
+
+# registry_strip_worker <name> — drop every WORKER_<safe>_* line from
+# $STATE_DIR/workers-runtime.env, along with the `# spawned|invited|revived`
+# header comment that introduced them. No-op when the registry is absent.
+#
+# Caller MUST hold with_registry_lock: this rewrites the file wholesale, so a
+# concurrent spawn appending to it would be lost. Shared by kill-worker.sh
+# (which kills the pane first), uninvite-worker.sh, and deregister-worker.sh
+# (which both leave the pane alone) so the three can't drift apart.
+registry_strip_worker() {
+    local name="$1"
+    local rt="$STATE_DIR/workers-runtime.env"
+    [ -f "$rt" ] || return 0
+    local sn tmp
+    sn="$(safe_name "$name")"
+    tmp="$rt.tmp.$$"
+    awk -v sn="$sn" '
+        BEGIN { drop_comment = 0 }
+        /^# (spawned|invited|revived) / { last_comment = $0; drop_comment = 0; next }
+        $0 ~ ("^WORKER_" sn "_") {
+            # drop this line, and also the most recent comment header (one-shot).
+            drop_comment = 1
+            next
+        }
+        {
+            if (last_comment != "" && drop_comment == 0) print last_comment
+            last_comment = ""
+            drop_comment = 0
+            print
+        }
+        END {
+            if (last_comment != "" && drop_comment == 0) print last_comment
+        }
+    ' "$rt" > "$tmp" && mv "$tmp" "$rt"
+}
+
 # with_registry_lock <cmd> [<args>...]
 # Serialize concurrent mutations of $STATE_DIR/workers-runtime.env and the
 # adjacent orchestrator.txt. mkdir-based (atomic, portable to macOS bash 3.2

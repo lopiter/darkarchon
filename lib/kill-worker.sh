@@ -51,32 +51,14 @@ tmux kill-window -t "=$TARGET" 2>/dev/null || true
 # Strip from runtime registry under a lock — concurrent spawn appending while
 # we rewrite would lose that spawn's entry.
 RT="$STATE_DIR/workers-runtime.env"
-_strip_worker_from_registry() {
-    [ -f "$RT" ] || return 0
-    local tmp="$RT.tmp.$$"
-    awk -v sn="$SAFE" '
-        BEGIN { drop_comment = 0 }
-        /^# spawned / { last_comment = $0; drop_comment = 0; next }
-        $0 ~ ("^WORKER_" sn "_") {
-            # drop this line, and also the most recent comment header (one-shot).
-            drop_comment = 1
-            next
-        }
-        {
-            if (last_comment != "" && drop_comment == 0) {
-                print last_comment
-            }
-            last_comment = ""
-            drop_comment = 0
-            print
-        }
-        END {
-            if (last_comment != "" && drop_comment == 0) print last_comment
-        }
-    ' "$RT" > "$tmp"
-    mv "$tmp" "$RT"
+_kill_and_strip() {
+    # Leave a recall record so this worker can be re-hired later with its cwd,
+    # role and conversation intact (revive-worker.sh) — killing a worker is
+    # routine, and losing where it lived should not be part of the cost.
+    worker_tombstone_write "$NAME" "killed"
+    registry_strip_worker "$NAME"
 }
-with_registry_lock _strip_worker_from_registry
+with_registry_lock _kill_and_strip
 
 echo "Killed worker '$NAME' at $TARGET (window removed from $SESSION_NAME)"
 echo "Registry updated at $RT"

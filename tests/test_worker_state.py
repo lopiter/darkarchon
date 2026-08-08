@@ -276,6 +276,68 @@ def test_resolve_scrape_busy_no_hook(tmp_path):
     assert r["source"] == "scrape"
 
 
+def test_resolve_flags_orphan_when_dead_pane_still_runs_an_agent(tmp_path):
+    """A killed worker whose window someone relaunched their own claude in.
+
+    Stays `dead` (nobody answers for that name) but must carry the flag, since
+    the cleanup path for a plain dead worker destroys the window.
+    """
+    _write_registry(tmp_path)
+    states = tmp_path / "states"
+    states.mkdir()
+    (states / "backend.json").write_text(json.dumps({"state": "ended", "detail": ""}))
+
+    r = ws.resolve(
+        "backend", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=lambda t, with_ansi=False: "────────────\n❯ ",
+        process_fn=lambda t: "node",  # claude, as macOS reports it
+    )
+    assert r["state"] == "dead"
+    assert r["orphaned"] is True
+    assert r["orphan_process"] == "node"
+    assert "unregistered agent" in r["detail"]
+
+
+def test_resolve_dead_with_bare_shell_is_not_orphaned(tmp_path):
+    _write_registry(tmp_path)
+    states = tmp_path / "states"
+    states.mkdir()
+    (states / "backend.json").write_text(json.dumps({"state": "ended", "detail": ""}))
+
+    r = ws.resolve(
+        "backend", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=lambda t, with_ansi=False: "$ ",
+        process_fn=lambda t: "zsh",
+    )
+    assert r["state"] == "dead"
+    assert "orphaned" not in r
+
+
+def test_resolve_live_worker_never_probes_for_orphans(tmp_path):
+    """The flag is meaningless unless the worker is dead — don't pay for the call."""
+    _write_registry(tmp_path)
+    calls = []
+
+    r = ws.resolve(
+        "backend", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=lambda t, with_ansi=False: "✻ Whisking…\n────────────\n❯ ",
+        process_fn=lambda t: calls.append(t) or "node",
+    )
+    assert r["state"] == "busy"
+    assert calls == []
+
+
+def test_detect_orphan_process_ignores_shells():
+    assert ws.detect_orphan_process("t", process_fn=lambda t: "claude") == "claude"
+    assert ws.detect_orphan_process("t", process_fn=lambda t: "2.1.220") == "2.1.220"
+    assert ws.detect_orphan_process("t", process_fn=lambda t: "codex") == "codex"
+    assert ws.detect_orphan_process("t", process_fn=lambda t: "bash") == ""
+    assert ws.detect_orphan_process("t", process_fn=lambda t: "") == ""
+
+
 def test_resolve_hook_awaiting_overrides_idle_scrape(tmp_path):
     _write_registry(tmp_path)
     states = tmp_path / "states"
