@@ -19,7 +19,10 @@
 #   3. <team_root>/prompts/<role>.md        — generic role contract
 #      (or <team_root>/prompts/worker.md as fallback)
 #   4. <context_dir>/<role>.md              — project-specific role context (optional)
-#   5. Runtime context tail (worker name, cwd, ...)
+#   5. <state_dir>/handovers/<worker>.md    — the previous holder of this worker
+#      name's parting note (lib/leave-team.sh). Read once, then archived.
+#      Skipped when resuming: a resumed worker wrote it.
+#   6. Runtime context tail (worker name, cwd, ...)
 #
 # Files that are missing are silently skipped — every layer is best-effort.
 #
@@ -83,7 +86,20 @@ if [ -n "$CONTEXT_DIR" ]; then
     append_layer "$CONTEXT_DIR/${ROLE}.md"
 fi
 
-# Layer 5: runtime context tail
+# Layer 5: handover from the previous holder of this worker name, if one
+# resigned with lib/leave-team.sh. Consumed exactly once — it is moved aside
+# after being read, so a worker that outlives its predecessor's note doesn't
+# keep being told about work that finished days ago.
+#
+# Skipped when resuming: a resumed worker IS the previous holder and already
+# lived through everything the note describes.
+HANDOVER_FILE="$STATE_DIR/handovers/$(printf '%s' "$WORKER_NAME" | tr -c '[:alnum:]_' '_').md"
+if [ -z "$RESUME_SESSION" ] && [ -f "$HANDOVER_FILE" ]; then
+    append_layer "$HANDOVER_FILE"
+    mv "$HANDOVER_FILE" "${HANDOVER_FILE%.md}.consumed.md" 2>/dev/null || true
+fi
+
+# Layer 6: runtime context tail
 PROMPT="${PROMPT}
 
 ---

@@ -199,6 +199,22 @@ checked_dispatch() {
         dead|unknown)
             echo "REFUSED: worker '$WORKER' ($TARGET) is $state." >&2
             [ -n "$detail" ] && echo "  detail: $detail" >&2
+            # Every other refusal above tells the caller what to do next; this
+            # one used to stop at the diagnosis, which left an orchestrator
+            # guessing — and guessing here reaches for kill-worker.sh, the one
+            # command that destroys a pane a human may be working in.
+            if [ "$state" = "dead" ]; then
+                if [ "$(resolve_field "$WORKER" orphaned)" = "1" ]; then
+                    echo "  This window still hosts an agent that is NOT this worker — someone" >&2
+                    echo "  relaunched their own session in it. Do NOT run kill-worker.sh." >&2
+                    echo "  Bring the worker back in a fresh window: revive-worker.sh '$WORKER'" >&2
+                    echo "  or adopt the pane as-is:                 revive-worker.sh '$WORKER' --adopt" >&2
+                else
+                    echo "  Restore it with its conversation:  revive-worker.sh '$WORKER'" >&2
+                    echo "  Start it over from scratch:        revive-worker.sh '$WORKER' --fresh" >&2
+                    echo "  Or drop it from the team:          prune-workers.sh" >&2
+                fi
+            fi
             return 1 ;;
         unsent)
             if [ "$FORCE" -eq 0 ]; then

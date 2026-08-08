@@ -169,6 +169,30 @@ def capture_pane_title(target: str) -> str:
     return out.strip() if rc == 0 else ""
 
 
+def capture_pane_process(target: str) -> str:
+    """Read the pane's foreground command (#{pane_current_command}).
+
+    Used to tell an empty shell apart from an agent still running in the pane —
+    a distinction pane CONTENT cannot make, since a dead worker's leftover shell
+    and a live agent at an empty prompt both scrape as idle-looking frames.
+    """
+    rc, out = _run_tmux(
+        ["tmux", "display-message", "-p", "-t", target, "#{pane_current_command}"]
+    )
+    return out.strip() if rc == 0 else ""
+
+
+def looks_like_agent_process(process: str) -> bool:
+    """True when this foreground command could be an agent CLI rather than a shell.
+
+    Deliberately the same loose test the pane scanner uses to pick candidates:
+    claude appears as node's version string on macOS, so anything node-shaped
+    counts. Over-reporting here is the safe direction — the one caller uses it
+    to warn "something is still running in this pane, don't kill it".
+    """
+    return _looks_like_claude_candidate(process) or _looks_like_codex_candidate(process)
+
+
 def capture_pane(target: str, with_ansi: bool = False) -> str:
     """Capture pane content. Plain by default; -e (with ANSI escapes) when with_ansi=True."""
     args = ["tmux", "capture-pane", "-p", "-t", target]

@@ -103,6 +103,29 @@ mcp__darkarchon__ask(question, context="", blocking=True, timeout_sec=90)
 
 (Legacy path, same files: `$EE_TEAM_ROOT/lib/ask.sh [--blocking] "your question"`.)
 
+## Leaving the Team (when your context is running out)
+
+You can resign. When your context is nearly full — or you are about to be
+restarted for any reason — leave deliberately instead of just dying:
+
+```bash
+$EE_TEAM_ROOT/lib/leave-team.sh --reason context-full --handover - <<'EOF'
+What I was doing, what is finished, what is half-done and where,
+what the next worker should watch out for, decisions already made.
+EOF
+```
+
+This deregisters you (your pane keeps running, you are simply no longer
+dispatchable), tells the orchestrator you left, and files your note. The
+replacement worker spawned under your name is given that note at launch.
+
+Why this matters: a worker that dies without leaving takes its cwd, its role
+and its account of the work with it, and leaves a registration the team keeps
+trying to dispatch to. Write the handover as if for a stranger — because the
+replacement has none of your context.
+
+Do NOT use this to escape a hard task. It is for exhaustion, not avoidance.
+
 ## Reporting Conventions
 
 - Cite code with `file:line` (e.g., `path/to/file.py:99`).

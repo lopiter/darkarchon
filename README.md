@@ -360,6 +360,10 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `dispatch-safe.sh [--after <ids>] <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy; `--after` waits for other tasks first |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
 | `lib/kill-worker.sh <name>` | Close the worker's tmux window and clean up the registry |
+| `lib/deregister-worker.sh <name>` | Drop a worker from the registry, pane untouched. Refuses a live worker (`--force` overrides) |
+| `revive-worker.sh <name> [--fresh\|--adopt] [--session-id <id>]` | Bring a dead worker back with its conversation (`claude --resume`); `--fresh` starts clean from its handover note, `--adopt` registers whatever agent is already in its old pane |
+| `prune-workers.sh [--dry-run] [--yes]` | Drop every dead registration. Never kills a window |
+| `lib/leave-team.sh --reason <r> --handover -` | Run BY a worker: resign, leave a handover note, tell the orchestrator |
 | `lib/start.sh` | Start every worker in `WORKERS=()` (config.env) |
 | `lib/stop.sh` | Kill the team's tmux session |
 | `lib/tasks.sh list \| today \| failed \| show <id> \| result <id>` | Inspect task history |
@@ -487,6 +491,9 @@ Shells with different `DARKARCHON_TEAM` values land in different tmux sessions a
     ├── mailboxes/<worker>.jsonl  # inter-worker messages
     ├── questions/<id>.json       # worker→user clarifying questions
     ├── heartbeats/<worker>.json  # per-worker liveness (5s update, pid + last_seen)
+    ├── states/<worker>.json      # last hook event + the Claude session id (what --resume needs)
+    ├── departed/<worker>.json    # recall record: cwd/role/kind/session id of a worker that left
+    ├── handovers/<worker>.md     # parting note, layered into the replacement's system prompt
     ├── mcp-config-<worker>.json  # generated per-spawn MCP server config
     ├── orchestrator.txt          # pane id of the session that spawned the team
     └── .registry.lock            # transient mkdir-lock for concurrent mutations
@@ -512,6 +519,36 @@ The id is checked against the session it was registered in before being trusted,
 Registrations written before `WINDOW_ID` existed keep resolving by name — there is nothing to migrate, though re-inviting an external pane will add the id.
 
 ---
+
+## Worker lifecycle: leaving, and coming back
+
+A worker dies for ordinary reasons — the machine reboots, a turn wedges, its context fills up and someone kills it. What it leaves behind is a registration nobody can dispatch to, holding its name hostage. Getting it back used to mean editing `workers-runtime.env` by hand.
+
+**Reviving.** Every spawned claude worker's session id is recorded by the state hook, so its conversation can be restored:
+
+```bash
+revive-worker.sh homepage-backend           # respawn in a NEW window, claude --resume
+revive-worker.sh homepage-backend --fresh   # replacement starts clean (reads the handover note)
+revive-worker.sh homepage-backend --adopt   # register the agent already running in its old pane
+```
+
+The revived worker is a fresh process with the charter, hooks, heartbeat and MCP tools reattached — the things a hand-relaunched `claude` in the same window does *not* have — plus the previous conversation.
+
+**`--resume` is not always the right answer.** It restores the context exactly as it was, which is what you want after a reboot, and precisely wrong when the worker was killed *because* its context was full: resuming replays it straight back into the wall. For that case the worker should resign on its own way out:
+
+```bash
+# run by the worker, in its own pane
+lib/leave-team.sh --reason context-full --handover - <<'EOF'
+Migration 003 is applied and verified; 004 is written but untested.
+The rollback path assumes the old column still exists — check that first.
+EOF
+```
+
+That deregisters it (its pane keeps running — it can finish its sentence), files a departure notice on the question queue, and writes a handover note that `revive-worker.sh <name> --fresh` layers into the replacement's system prompt at launch. Knowledge transfers; the exhausted context does not.
+
+**Nothing here kills a window.** A dead worker means "nobody answers for this name" — it says nothing about the pane, which someone may have relaunched their own session in. The resolver reports that case as `dead` with `orphaned=1`, dispatch refusals name it explicitly, and `prune-workers.sh` clears the ghost registration while leaving the live session alone. `lib/kill-worker.sh` remains the only command that destroys a window, and it is never what a dead worker calls for.
+
+Every removal path (`kill`, `uninvite`, `deregister`, `leave`) first writes a recall record to `departed/<worker>.json` holding the cwd, role, kind and session id — so a worker can be brought back long after its registration is gone.
 
 ## Team lifecycle
 

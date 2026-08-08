@@ -70,3 +70,18 @@ manager (Hermes)  →  YOU (orchestrator)  →  your own darkarchon worker team
 9. **Chasing undelivered mail.** If a worker seems not to have seen a message,
    `lib/mailbox.sh outstanding <worker>` lists what it never drained and
    `renotify <worker>` re-rings its bell.
+10. **A dead worker is recoverable — do not reach for kill.** `dead` means
+    nobody answers for that name; it does NOT mean the window is free.
+    - `$EE_TEAM_ROOT/revive-worker.sh <name>` respawns it in a new window with
+      its previous conversation restored (`claude --resume`), rebuilding the
+      charter, hooks and heartbeat. Use this after a reboot or an accidental kill.
+    - `revive-worker.sh <name> --fresh` starts a replacement clean, picking up
+      the departing worker's handover note. Use this when the worker died
+      BECAUSE its context filled up — resuming that conversation just replays it
+      into the same wall.
+    - `$EE_TEAM_ROOT/prune-workers.sh` drops dead registrations (never kills a
+      pane) when you want the names back rather than the workers.
+
+    If the state carries `orphaned=1`, someone has relaunched their own agent in
+    that window. **Never** run `kill-worker.sh` on it — that destroys a live
+    session a human is using. Revive into a new window, or `--adopt` that pane.

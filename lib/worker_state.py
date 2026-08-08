@@ -40,12 +40,18 @@ from lib.heartbeat import (  # noqa: E402
     is_pid_alive,
     read_heartbeat,
 )
-from lib.tmux_scanner import capture_pane, capture_pane_title  # noqa: E402
+from lib.tmux_scanner import (  # noqa: E402
+    capture_pane,
+    capture_pane_process,
+    capture_pane_title,
+    looks_like_agent_process,
+)
 from lib.worker_resolver import parse_registry_file, read_scoped  # noqa: E402
 
 # Canonical state vocabulary emitted by this resolver.
 #   dead                — worker gone (no session / heartbeat stale / pid dead /
-#                         session ended)
+#                         session ended). May carry orphaned=True when the
+#                         window still hosts an unregistered agent.
 #   rate_limited        — API limit reached (scrape meta-state)
 #   error               — codex auth/stream failure (scrape meta-state)
 #   awaiting_permission — blocked on a tool-permission prompt (PermissionRequest hook)
@@ -192,6 +198,26 @@ def liveness_is_dead(
     return False, ""
 
 
+# ── Orphaned pane detection ────────────────────────────────────────────────
+def detect_orphan_process(target: str, process_fn=capture_pane_process) -> str:
+    """The agent process still running in a dead worker's pane, or ''.
+
+    A worker reported dead has, from darkarchon's side, exactly one meaning: no
+    heartbeat and/or a SessionEnd — nobody is answering for that name. It says
+    nothing about the WINDOW, which outlives the worker process. When someone
+    kills a worker's claude (context full, a stuck turn) and starts their own
+    claude in that same window, the registry still points at a pane that now
+    hosts a live, unregistered agent.
+
+    That combination is the dangerous one: the honest cleanup for a dead worker
+    is kill-worker.sh, which destroys the window — and with it the conversation
+    the human has been building there. Surfacing the process lets the cleanup
+    paths refuse, and lets the dashboard say "occupied" instead of just "dead".
+    """
+    proc = process_fn(target)
+    return proc if proc and looks_like_agent_process(proc) else ""
+
+
 # ── Registry lookup ────────────────────────────────────────────────────────
 def lookup_worker(state_dir: Path, worker_name: str) -> dict | None:
     """Resolve target/kind/cwd for a worker NAME from workers-runtime.env.
@@ -229,6 +255,7 @@ def resolve(
     session_running_fn=_tmux_session_running,
     capture_fn=capture_pane,
     title_fn=capture_pane_title,
+    process_fn=capture_pane_process,
     now: float | None = None,
 ) -> dict:
     """Resolve one worker's state. Returns {state, detail, source, worker,
@@ -258,7 +285,8 @@ def resolve(
     merged = synthesize(hook, scrape, is_dead)
     if is_dead and not merged.get("detail"):
         merged["detail"] = reason
-    return {
+
+    result = {
         "worker": worker_name,
         "target": target,
         "kind": kind,
@@ -266,6 +294,22 @@ def resolve(
         "detail": merged.get("detail", ""),
         "source": merged["source"],
     }
+
+    # A dead worker whose window still hosts an agent: the state stays `dead`
+    # (nobody answers for this name, so it must not take dispatches), but the
+    # pane is NOT free for the cleanup paths to destroy. Reported as a separate
+    # flag rather than a new state so every existing `case $state in` — which
+    # would otherwise fall through to its "unrecognized, proceed anyway" arm —
+    # keeps behaving exactly as before.
+    if merged["state"] == "dead" and session_up:
+        proc = detect_orphan_process(exact, process_fn)
+        if proc:
+            result["orphaned"] = True
+            result["orphan_process"] = proc
+            note = f"pane still runs an unregistered agent ({proc})"
+            result["detail"] = f"{result['detail']}; {note}" if result["detail"] else note
+
+    return result
 
 
 # ── Wait-until primitive ───────────────────────────────────────────────────
@@ -369,6 +413,8 @@ def _format_kv(r: dict) -> str:
     if detail:
         parts.append(f"detail='{detail[:80]}'")
     parts.append(f"source={r['source']}")
+    if r.get("orphaned"):
+        parts.append("orphaned=1")
     return " ".join(parts)
 
 
@@ -401,6 +447,10 @@ def main() -> int:
 
     if args.field:
         val = r.get(args.field, "")
+        # Shell callers test these with [ "$x" = "1" ]; Python's True/False
+        # repr would make every falsy flag a non-empty string.
+        if isinstance(val, bool):
+            val = "1" if val else ""
         print(val if val is not None else "")
         return 0
     if args.json:
