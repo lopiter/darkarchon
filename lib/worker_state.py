@@ -150,6 +150,11 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         running" over an empty prompt) mid-turn, so a live busy hook wins there.
         A worker whose turn really ended (Stop → hook idle) with a long-lived
         background shell keeps counting as idle — this guard is busy-hook-only.
+      - scrape sees an open modal dialog (awaiting_permission) → it wins over
+        any live hook state. The PermissionRequest hook does not reach every
+        build or settings merge, so a blocked worker can carry a stale idle or
+        busy hook; the screen is unambiguous there (the dialog replaces the
+        input prompt) and idle would advertise it as dispatchable.
       - hook says idle but scrape sees unsent → user is typing (hooks can't see
         the prompt line) → unsent.
       - otherwise the hook is authoritative.
@@ -164,6 +169,8 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
     if h in _HOOK_TERMINAL:
         return {"state": "dead", "detail": hook.get("detail", "") or "session ended",
                 "source": "hook"}
+    if s == "awaiting_permission":
+        return {**scrape, "source": "scrape-overlay"}
     if h == "busy" and s in ("idle", "unsent"):
         if scrape.get("shells_running"):
             return {

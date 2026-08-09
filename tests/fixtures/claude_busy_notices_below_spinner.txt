@@ -1,0 +1,7 @@
+  ⎿  Read 42 lines
+  ✶ Kneading… (3m 8s · ↓ 11.8k tokens)
+  ⎿  Tip: Did you know you can drag and drop image files into your terminal?
+  ✘ Auto-update failed · Run claude doctor
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+❯
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─

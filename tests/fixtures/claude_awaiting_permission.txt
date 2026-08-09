@@ -1,0 +1,11 @@
+⏺ Bash(cd ../ui && git branch --show-current)
+  ⎿  Running…
+
+ Check UI repo branch
+ This command changes directory before running git, which can execute untrusted hooks from the target directory. Approve only if you trust it.
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
