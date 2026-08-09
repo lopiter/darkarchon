@@ -111,10 +111,12 @@ def _normalize_scrape_state(state: str) -> str:
 def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=capture_pane_title) -> dict:
     """Capture the pane and classify via the kind-appropriate detector.
 
-    codex and gemini also read the pane's OSC title (#{pane_title}) — both set
+    Every kind reads the pane's OSC title (#{pane_title}) — all three publish
     state there (codex: braille spinner / "Action Required"; gemini:
-    "✦ Working…" / "◇ Ready"; live-verified 2026-08). Claude Code's title does
-    not toggle with state, so the claude detector ignores it.
+    "✦ Working…" / "◇ Ready"; claude: braille spinner / "✳"; live-verified
+    2026-08). Claude Code's title was static when this was first written and
+    now toggles, so the claude detector uses it as well — but only to
+    corroborate busy, since its idle glyph also covers a blocked worker.
     """
     plain = capture_fn(target, with_ansi=False)
     ansi = capture_fn(target, with_ansi=True)
@@ -125,7 +127,7 @@ def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=captu
     elif kind == "gemini":
         st = classify_gemini_state(plain, ansi, title_fn(target))
     else:
-        st = classify_claude_state(plain, ansi)
+        st = classify_claude_state(plain, ansi, title_fn(target))
     out = {"state": _normalize_scrape_state(st["state"]), "detail": st.get("detail", "")}
     if st.get("shells_running"):
         out["shells_running"] = True
@@ -150,6 +152,11 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         running" over an empty prompt) mid-turn, so a live busy hook wins there.
         A worker whose turn really ended (Stop → hook idle) with a long-lived
         background shell keeps counting as idle — this guard is busy-hook-only.
+      - scrape sees an open modal dialog (awaiting_permission) → it wins over
+        any live hook state. The PermissionRequest hook does not reach every
+        build or settings merge, so a blocked worker can carry a stale idle or
+        busy hook; the screen is unambiguous there (the dialog replaces the
+        input prompt) and idle would advertise it as dispatchable.
       - hook says idle but scrape sees unsent → user is typing (hooks can't see
         the prompt line) → unsent.
       - otherwise the hook is authoritative.
@@ -164,6 +171,8 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
     if h in _HOOK_TERMINAL:
         return {"state": "dead", "detail": hook.get("detail", "") or "session ended",
                 "source": "hook"}
+    if s == "awaiting_permission":
+        return {**scrape, "source": "scrape-overlay"}
     if h == "busy" and s in ("idle", "unsent"):
         if scrape.get("shells_running"):
             return {

@@ -556,3 +556,32 @@ def test_heartbeat_lookup_is_scoped_to_the_worker_s_team(tmp_path):
     out = annotate_workers([worker], stale, own)
 
     assert out[0]["state"] == "busy"
+
+
+# ── an open modal dialog outranks a stale hook ───────────────────────────────
+# The PermissionRequest hook does not reach every build or settings merge —
+# state-hook.sh keeps a Notification string-match fallback for exactly that —
+# so a worker can sit on an approval dialog while its last hook event still
+# says idle (or busy, from the turn that triggered the tool). The screen is
+# unambiguous in that situation (the dialog replaces the input prompt), and
+# reporting idle would advertise a blocked worker as dispatchable.
+
+def test_open_dialog_overrides_stale_idle_hook():
+    r = ws.synthesize(hook={"state": "idle"},
+                      scrape={"state": "awaiting_permission", "detail": "Check UI repo branch"},
+                      is_dead=False)
+    assert r["state"] == "awaiting_permission"
+
+
+def test_open_dialog_outranks_busy_hook_for_actionability():
+    r = ws.synthesize(hook={"state": "busy"},
+                      scrape={"state": "awaiting_permission", "detail": "x"},
+                      is_dead=False)
+    assert r["state"] == "awaiting_permission"
+
+
+def test_ended_session_still_wins_over_a_dialog_left_on_screen():
+    r = ws.synthesize(hook={"state": "ended"},
+                      scrape={"state": "awaiting_permission", "detail": "x"},
+                      is_dead=False)
+    assert r["state"] == "dead"

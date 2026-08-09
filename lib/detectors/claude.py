@@ -36,6 +36,24 @@ RATE_LIMIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PROMPT_CHAR = "❯"
+# A modal dialog — tool approval, folder trust — draws its menu rows with the
+# SAME glyph as the input prompt (" ❯ 1. Yes"), and while one is open Claude
+# Code draws no input prompt at all. So the last ❯ on screen tells them apart:
+# a menu row means the session is blocked on a human, and a bare prompt means
+# the dialog (if still visible) was already answered. Without this the typed
+# check below reads "1. Yes" as user keystrokes and reports `typed`, whose
+# documented remedy is `dispatch-safe --force` — a BSpace burst fired into a
+# live approval dialog.
+MENU_SELECTOR = re.compile(r"^\s*❯\s*\d+\.\s")
+# Claude Code continuously rewrites the tmux pane title through an escape
+# sequence: a braille spinner (U+2800–U+28FF) while working, "✳" when not.
+# The behaviour is undocumented and currently cannot be turned off, so it is
+# used only to corroborate — never as the sole signal. Same idiom as the codex
+# detector, which reads its own title spinner.
+TITLE_BUSY_PATTERN = re.compile(r"^[⠀-⣿]\s")
+# The question itself says nothing about what is being approved; when it is
+# this generic, the line above it is the useful one.
+GENERIC_DIALOG_QUESTION = re.compile(r"^Do you want to proceed\??$")
 DIM_ESCAPE = re.compile(r"\x1b\[(2|0;2)m")
 
 
@@ -43,7 +61,7 @@ def strip_ansi(text: str) -> str:
     return ANSI.sub("", text)
 
 
-def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
+def classify_claude_state(capture_plain: str, capture_with_ansi: str, pane_title: str = "") -> dict:
     lines = capture_plain.splitlines()
 
     # Meta-state: rate limit. Check last 6 non-blank lines (status bar area).
@@ -60,6 +78,14 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
             prompt_idx = i
             break
 
+    # Blocked on a modal dialog? Decided from that last ❯ line (see MENU_SELECTOR).
+    if prompt_idx is not None and MENU_SELECTOR.search(lines[prompt_idx]):
+        above = [ln.strip() for ln in lines[:prompt_idx] if ln.strip()]
+        detail = above[-1] if above else ""
+        if GENERIC_DIALOG_QUESTION.match(detail) and len(above) >= 2:
+            detail = above[-2]
+        return {"state": "awaiting_permission", "detail": detail[:80]}
+
     sep_idx = None
     if prompt_idx is not None:
         for i in range(prompt_idx - 1, -1, -1):
@@ -71,13 +97,25 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
     shells_running = False
     if sep_idx is not None and sep_idx >= 1:
         activity = [lines[i] for i in range(max(0, sep_idx - 5), sep_idx) if lines[i].strip()]
-        recent = "\n".join(activity[-2:])
-        if COMPACT_PATTERN.search(recent):
+        # The spinner is searched across the WHOLE activity area, not just the
+        # last two lines. Claude Code draws usage tips, the auto-update banner
+        # and background-run hints between the spinner and the separator, and
+        # any two of them pushed the spinner out of a two-line window — verified
+        # on a live capture where "✶ Kneading…" was on screen and the session
+        # still scraped as idle. Erring toward busy is the safe direction here:
+        # a false busy only delays a dispatch, while a false idle lets
+        # worker_state.synthesize self-heal a real hook=busy into idle and
+        # dispatch into a worker mid-turn.
+        window = "\n".join(activity)
+        if COMPACT_PATTERN.search(window):
             return {"state": "compacting", "detail": "Compacting context"}
-        m = BUSY_PATTERN.search(recent)
+        m = BUSY_PATTERN.search(window)
         if m:
             return {"state": "busy", "detail": m.group()}
-        shells_running = bool(SHELLS_RUNNING_PATTERN.search(recent))
+        # shells_running stays on the live status line only: that text lingers
+        # in scrollback long after the shells exit, so a wider window would
+        # report shells that are long gone.
+        shells_running = bool(SHELLS_RUNNING_PATTERN.search("\n".join(activity[-2:])))
     else:
         # No clear prompt structure — fall back to checking last non-blank lines
         nonblank = [ln for ln in lines if ln.strip()]
@@ -97,6 +135,20 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
                     detail = plain_after[:80] + ("…" if len(plain_after) > 80 else "")
                     return {"state": "typed", "detail": detail, "shells_running": shells_running}
             break
+
+    # Last word to the pane title, and only to turn a would-be idle into busy.
+    # The screen is what distinguishes idle from blocked and from unsent — "✳"
+    # is shown for an open approval dialog too (live-verified), and unsent has
+    # to survive so `dispatch-safe --force` keeps warning about real keystrokes.
+    # What the title adds is immunity to layout: it cannot be pushed out of
+    # view by a tip line or the auto-update banner, which is precisely how a
+    # working session came to scrape as idle.
+    if pane_title and TITLE_BUSY_PATTERN.search(pane_title):
+        return {
+            "state": "busy",
+            "detail": pane_title.strip()[:80],
+            "shells_running": shells_running,
+        }
 
     return {
         "state": "idle",
