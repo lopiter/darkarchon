@@ -94,12 +94,13 @@ Tell the user, in their language:
 1. Installation is complete, but the plugin loads on the **next Hermes
    restart** — they should restart this Hermes when convenient.
 2. After restart, they can just ask in chat (e.g. *"hire a backend employee
-   on ~/work/foo and have it do X"*). On first use you will ask them to name
-   the fleet's tmux session — never pick that name yourself.
-3. `/orch` shows the staff list, `/orch runs` recent tasks,
-   `/orch team <name>` sets the fleet session name manually.
+   on ~/work/foo and have it do X"*). Every hire joins a **team** — you ask
+   them which one at hire time and never pick the name yourself; the team is
+   a darkarchon namespace under `~/.darkarchon/<team>/`.
+3. `/orch` shows the staff grouped by team, `/orch runs` recent tasks,
+   `/orch team` the teams (`/orch team <name>` makes one the default).
 4. If this machine runs multiple Hermes instances, each needs its own
-   `HERMES_HOME` (or `HERMES_ORCH_TEAM`) so fleets don't collide.
+   `HERMES_HOME` (or `HERMES_ORCH_TEAM`) so they don't collide.
 
-Do NOT spawn any orchestrator or set a team name during installation — that is
+Do NOT spawn any orchestrator or create a team during installation — that is
 the user's decision after restart.

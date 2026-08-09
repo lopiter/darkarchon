@@ -27,28 +27,28 @@ ORCHESTRATOR_SCHEMA = {
         "it stays hired between tasks. Delegate BIG self-contained missions — "
         "not micro-steps. Prefer giving new work to an existing idle employee "
         "whose charter fits over hiring a duplicate.\n\n"
-        "FIRST USE: the fleet's tmux session name is not preset. If any action "
-        "returns the 'No fleet session name' error, ask the USER what to name "
-        "it (never invent one), then call action=set_fleet.\n\n"
+        "TEAMS — EVERY HIRE NEEDS ONE: an employee is hired INTO a team, and "
+        "the team is a real darkarchon namespace (~/.darkarchon/<team>/), the "
+        "same thing the user gets by making a team by hand. spawn/invite "
+        "REFUSE without team=. Never invent the name: if the user did not say "
+        "which team ('aaa를 bbb팀으로 채용해줘' → team=bbb), ASK THEM — name "
+        "the existing teams (action=teams) and let them pick one or give a "
+        "new name — then hire in a later turn. A new name simply creates the "
+        "team; no separate setup call is needed.\n\n"
         "NAMES: dispatch/status accept a unique name prefix ('inf' reaches "
-        "the one employee starting with 'inf'); the tool resolves it and "
-        "errors with candidates when ambiguous — relay that error, don't "
-        "guess.\n\n"
-        "TEAMS: employee teams ('X팀') are LABELS inside the one fleet — "
-        "when the user says 'aaa를 bbb팀으로 채용해줘', call spawn with "
-        "name=aaa, team=bbb. NEVER call set_fleet for that: set_fleet "
-        "switches the whole fleet namespace and hides every existing "
-        "employee (it is guarded and will refuse while employees are "
-        "registered).\n\n"
+        "the one employee starting with 'inf'); resolution spans ALL teams, "
+        "so you never need to know an employee's team to reach it. The tool "
+        "errors with candidates when ambiguous — relay that, don't guess.\n\n"
         "Actions:\n"
-        "- set_fleet: set the fleet session name (once, from the user's "
-        "answer; fleet parameter). NOT for putting an employee in a team — "
-        "that is spawn's team parameter. Refuses to switch away from a fleet "
-        "that still has employees unless force=true (user explicitly wants "
-        "to abandon it). set_team is a deprecated alias.\n"
-        "- spawn: hire an employee (name + cwd + optional brief = job charter "
-        "injected into its system prompt + optional team = group label shown "
-        "in list). Each employee gets its OWN tmux "
+        "- teams: list the teams and their rosters. Use it before asking the "
+        "user which team a new hire joins.\n"
+        "- set_team: create a team / change the default one without hiring. "
+        "Rarely needed — hiring with team=<name> already creates it. Nothing "
+        "is hidden by switching: all teams stay visible and dispatchable. "
+        "set_fleet is a deprecated alias.\n"
+        "- spawn: hire an employee (name + cwd + REQUIRED team + optional "
+        "brief = job charter injected into its system prompt). "
+        "Each employee gets its OWN tmux "
         "session named after it, where its sub-workers also live. Takes ~15s "
         "to boot; check with status before the first dispatch. When an "
         "employee died (PC reboot, killed session) pass resume=true to "
@@ -60,7 +60,8 @@ ORCHESTRATOR_SCHEMA = {
         "pass continue_work=true with that cwd — the latest session there "
         "is found and resumed automatically, no session id needed.\n"
         "- invite: adopt an ALREADY-RUNNING Claude session (target = "
-        "'session:window') as an employee instead of spawning a new one. "
+        "'session:window') as an employee instead of spawning a new one; it "
+        "needs a team just like spawn. "
         "External employees can be dispatched to but never killed — use "
         "uninvite to let one go (the session itself is left untouched).\n"
         "- uninvite: remove an invited employee from the roster.\n"
@@ -93,39 +94,30 @@ ORCHESTRATOR_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["set_fleet", "set_team", "spawn", "invite",
+                "enum": ["teams", "set_team", "set_fleet", "spawn", "invite",
                          "uninvite", "dispatch",
                          "result", "status", "list", "runs", "questions",
                          "answer", "interrupt", "kill"],
-                "description": "Fleet operation to perform.",
-            },
-            "fleet": {
-                "type": "string",
-                "description": (
-                    "set_fleet only: the fleet namespace name chosen by the "
-                    "user ([a-zA-Z0-9_-]). This is the whole fleet's "
-                    "identity, NOT an employee team — employee teams are "
-                    "spawn's team parameter."
-                ),
+                "description": "Staff operation to perform.",
             },
             "team": {
                 "type": "string",
                 "description": (
-                    "spawn/invite: the employee's team/group LABEL "
-                    "([a-zA-Z0-9_-]) — use this when the user hires someone "
-                    "'into team X' ('X팀으로'); it does NOT switch the fleet. "
-                    "(Legacy: for the deprecated set_team alias this carries "
-                    "the fleet name.)"
+                    "The darkarchon team ([a-zA-Z0-9_-]) — REQUIRED for "
+                    "spawn/invite: it is the namespace the employee is hired "
+                    "into (~/.darkarchon/<team>/). Use the name the USER "
+                    "gave ('X팀으로 채용' → team=X); ask them if they did not "
+                    "give one, never invent it. An unknown name creates the "
+                    "team. Also the target of set_team."
                 ),
+            },
+            "fleet": {
+                "type": "string",
+                "description": "Deprecated alias for team (set_fleet only).",
             },
             "force": {
                 "type": "boolean",
-                "description": (
-                    "set_fleet only: confirm switching the fleet namespace "
-                    "away from one that still has registered employees "
-                    "(they become invisible to list/dispatch). Pass only "
-                    "when the user explicitly confirmed."
-                ),
+                "description": "Accepted but unused (legacy set_fleet flag).",
             },
             "name": {
                 "type": "string",
@@ -231,9 +223,11 @@ def _handle_tool(args: Dict[str, Any], **_kw: Any) -> str:
     name = (args.get("name") or "").strip()
     run_id = (args.get("run_id") or "").strip()
     try:
-        if action in ("set_fleet", "set_team"):
-            out = orch.set_fleet(args.get("fleet") or args.get("team") or "",
-                                 bool(args.get("force")))
+        if action == "teams":
+            out = orch.teams()
+        elif action in ("set_team", "set_fleet"):
+            out = orch.set_team(args.get("team") or args.get("fleet") or "",
+                                bool(args.get("force")))
         elif action == "spawn":
             out = orch.spawn(name, (args.get("cwd") or "").strip(),
                              args.get("brief") or "",
@@ -277,14 +271,15 @@ _HELP = """\
 /orch — darkarchon orchestrator staff overview
 
 Subcommands:
-  list            Employees + live state (default)
+  list            Employees + live state, grouped by team (default)
   runs            Recent dispatch runs
   questions       Pending questions escalated by employees
-  fleet [<name>]  Show or set the fleet tmux session name ("team" also works)
+  team [<name>]   Show the teams, or make <name> the default one
   help            This text
 
 Hiring/dispatching is done by the agent via the `orchestrator` tool —
-just ask in chat, e.g. "hire a backend-dev on ~/work/foo and have it ...".
+just ask in chat, e.g. "hire a backend-dev on ~/work/foo into the api team
+and have it ...". Every hire names the team it joins.
 Quick dispatch without the model in the loop:  /to <employee> <task>
 (a unique name prefix works: /to inf ...)
 """
@@ -295,13 +290,21 @@ def _handle_slash(raw_args: str) -> str:
     cmd = sub[0] if sub else "list"
     if cmd in {"help", "-h", "--help"}:
         return _HELP
-    if cmd in ("fleet", "team"):
+    if cmd in ("team", "teams", "fleet"):
         if len(sub) > 1:
-            out = orch.set_fleet(sub[1])
+            out = orch.set_team(sub[1])
             return out.get("note") if out.get("ok") else f"Error: {out.get('error')}"
-        team = orch.manager_team()
-        return (f"Fleet session: '{team}'" if team
-                else "No fleet session name set yet. Use `/orch fleet <name>`.")
+        data = orch.teams()
+        if not data["teams"]:
+            return ("No teams yet — the first hire creates one "
+                    "(ask me to hire someone into a team).")
+        lines = ["Teams:"]
+        for t in data["teams"]:
+            roster = ", ".join(t["employees"]) or "(empty)"
+            lines.append(f"  {t['team']}{' *' if t['current'] else ''}"
+                         f"  {roster}")
+        lines.append("(* = most recent team; every hire still names its own)")
+        return "\n".join(lines)
     if cmd == "questions":
         data = orch.questions()
         if not data.get("ok"):
@@ -331,9 +334,8 @@ def _handle_slash(raw_args: str) -> str:
         if not data.get("ok"):
             return f"Error: {data.get('error')}"
         if not data["orchestrators"]:
-            return (f"No employees in fleet '{data['team']}' yet. "
-                    f"Ask me to hire one.")
-        lines = [f"Staff (fleet '{data['team']}'):"]
+            return "No employees hired yet. Ask me to hire one into a team."
+        lines = ["Staff:"]
         by_team: Dict[str, list] = {}
         for o in data["orchestrators"]:
             by_team.setdefault(o.get("team") or "", []).append(o)
@@ -357,7 +359,7 @@ def _handle_to(raw_args: str) -> str:
         return (f"Usage: /to <employee> <task>\n"
                 f"Employees: {roster or '(none — hire one first)'}")
     query, task = parts[0], parts[1]
-    name, cands = orch._resolve_name(query)
+    name, _team, cands = orch._resolve_name(query)
     if name is None:
         if cands:
             return (f"'{query.lstrip('@')}' is ambiguous — did you mean: "
