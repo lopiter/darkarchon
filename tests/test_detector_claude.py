@@ -151,3 +151,41 @@ def test_answered_dialog_in_scrollback_does_not_mask_the_live_prompt():
     )
     result = classify_claude_state(plain, plain)
     assert result["state"] == "idle"
+
+
+# ── pane title as a corroborating busy signal ────────────────────────────────
+# Claude Code continuously rewrites the tmux pane title: a braille spinner
+# (U+2800–U+28FF) while working, "✳" when not. Unlike the screen, the title
+# cannot be pushed out of view by a tip or a banner, which is exactly how the
+# masked-spinner false-idle above happened. It is a corroborating signal only —
+# it upgrades a would-be idle to busy and nothing else, because "✳" covers both
+# idle AND blocked-on-a-dialog (live-verified), and because a user's unsent
+# keystrokes must keep reporting unsent so `--force` keeps its warning.
+
+def test_title_spinner_rescues_a_screen_that_looks_idle(load_fixture):
+    plain = load_fixture("claude_idle.txt")
+    result = classify_claude_state(plain, plain, "⠂ Cross-session messaging migration")
+    assert result["state"] == "busy"
+
+
+def test_title_idle_glyph_leaves_an_idle_screen_idle(load_fixture):
+    plain = load_fixture("claude_idle.txt")
+    result = classify_claude_state(plain, plain, "✳ Review weekly meeting notes")
+    assert result["state"] == "idle"
+
+
+def test_open_dialog_outranks_a_stale_title_spinner(load_fixture):
+    plain = load_fixture("claude_awaiting_permission.txt")
+    result = classify_claude_state(plain, plain, "⠂ still spinning")
+    assert result["state"] == "awaiting_permission"
+
+
+def test_typed_input_outranks_the_title_spinner(load_fixture):
+    ansi = load_fixture("claude_typed_real.txt")
+    result = classify_claude_state(ansi, ansi, "⠂ working on it")
+    assert result["state"] == "typed"
+
+
+def test_title_is_optional_so_existing_callers_keep_working(load_fixture):
+    plain = load_fixture("claude_idle.txt")
+    assert classify_claude_state(plain, plain)["state"] == "idle"

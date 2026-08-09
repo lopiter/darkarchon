@@ -45,6 +45,12 @@ PROMPT_CHAR = "❯"
 # documented remedy is `dispatch-safe --force` — a BSpace burst fired into a
 # live approval dialog.
 MENU_SELECTOR = re.compile(r"^\s*❯\s*\d+\.\s")
+# Claude Code continuously rewrites the tmux pane title through an escape
+# sequence: a braille spinner (U+2800–U+28FF) while working, "✳" when not.
+# The behaviour is undocumented and currently cannot be turned off, so it is
+# used only to corroborate — never as the sole signal. Same idiom as the codex
+# detector, which reads its own title spinner.
+TITLE_BUSY_PATTERN = re.compile(r"^[⠀-⣿]\s")
 # The question itself says nothing about what is being approved; when it is
 # this generic, the line above it is the useful one.
 GENERIC_DIALOG_QUESTION = re.compile(r"^Do you want to proceed\??$")
@@ -55,7 +61,7 @@ def strip_ansi(text: str) -> str:
     return ANSI.sub("", text)
 
 
-def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
+def classify_claude_state(capture_plain: str, capture_with_ansi: str, pane_title: str = "") -> dict:
     lines = capture_plain.splitlines()
 
     # Meta-state: rate limit. Check last 6 non-blank lines (status bar area).
@@ -129,6 +135,20 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str) -> dict:
                     detail = plain_after[:80] + ("…" if len(plain_after) > 80 else "")
                     return {"state": "typed", "detail": detail, "shells_running": shells_running}
             break
+
+    # Last word to the pane title, and only to turn a would-be idle into busy.
+    # The screen is what distinguishes idle from blocked and from unsent — "✳"
+    # is shown for an open approval dialog too (live-verified), and unsent has
+    # to survive so `dispatch-safe --force` keeps warning about real keystrokes.
+    # What the title adds is immunity to layout: it cannot be pushed out of
+    # view by a tip line or the auto-update banner, which is precisely how a
+    # working session came to scrape as idle.
+    if pane_title and TITLE_BUSY_PATTERN.search(pane_title):
+        return {
+            "state": "busy",
+            "detail": pane_title.strip()[:80],
+            "shells_running": shells_running,
+        }
 
     return {
         "state": "idle",
