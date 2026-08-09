@@ -1,0 +1,186 @@
+/* Team view of the detail panel. Structure (header / section / hint) is
+   inherited from DetailPanel.module.css — only the team-specific bits live
+   here. */
+
+.pillReady {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+/* ── wind-down verdict ── */
+.ready {
+  background: var(--green-bg);
+  border-bottom: 1px solid rgba(79, 175, 111, 0.3);
+}
+.verdictOk {
+  font-size: 13px;
+  color: var(--green);
+}
+.verdictBusy {
+  font-size: 13px;
+  color: var(--amber);
+}
+.blockers {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.blockerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.blockerLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.blockerWho {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+/* ── roster ── */
+.roster {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rosterRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rosterRow:hover {
+  background: var(--border-subtle);
+}
+.rosterName {
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extTag {
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  color: var(--blue-text);
+  border: 1px solid var(--blue-accent);
+  border-radius: 3px;
+  padding: 0 3px;
+  flex: none;
+}
+.rosterTarget {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-left: auto;
+  flex: none;
+}
+.rosterState {
+  font-size: 11px;
+  color: var(--text-muted);
+  width: 76px;
+  text-align: right;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── command blocks ── */
+.cmdBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.cmdHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.cmdLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cmdLabelDanger {
+  font-size: 11px;
+  color: var(--red);
+}
+.cmdCopy {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-family: inherit;
+  flex: none;
+}
+.cmdCopy:hover {
+  color: var(--text-primary);
+  background: var(--border-subtle);
+}
+.cmd {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-terminal);
+  border-radius: 5px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cmdWarn {
+  font-size: 11px;
+  color: var(--amber);
+}
+
+.copyAll {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.copyAll:hover {
+  color: var(--text-primary);
+  border-color: var(--border-stronger);
+}
+
+/* Invited panes survive the shutdown by design — said in the panel, not just
+   in the code, because "I killed the session and my own window went with it"
+   is exactly the surprise this whole view exists to prevent. */
+.warn {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--blue-text);
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-accent);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+.warn code {
+  font-family: ui-monospace, monospace;
+}

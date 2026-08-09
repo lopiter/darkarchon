@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AttentionSummary } from './components/AttentionSummary/AttentionSummary';
+import { ContextMenu } from './components/ContextMenu/ContextMenu';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { DebugPanel } from './components/DebugPanel/DebugPanel';
 import { DetailPanel } from './components/DetailPanel/DetailPanel';
@@ -51,6 +52,7 @@ export function App() {
       <AttentionSummary />
       <ViewToggle />
       <DetailPanel />
+      <ContextMenu />
     </>
   );
 }

@@ -16,6 +16,7 @@
 
 import type { KeyboardEvent } from 'react';
 import { AgentLogo } from '../AgentLogo/AgentLogo';
+import { onWorkerContextMenu } from '../ContextMenu/menus';
 import { useDashboardStore } from '../../store/dashboard';
 import type { Worker, WorkerState } from '../../types/domain';
 import { formatPing } from '../../utils/formatTime';
@@ -138,6 +139,7 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
         .filter(Boolean)
         .join(' ')}
       onClick={onClick}
+      onContextMenu={onWorkerContextMenu(worker)}
       onKeyDown={onKeyDown}
       role="button"
       tabIndex={exiting ? -1 : 0}

@@ -11,6 +11,7 @@ const worker = (id: string): Worker => ({
   role: 'dev',
   tmuxTarget: `${id}:1.1`,
   process: 'claude',
+  external: false,
   isOrchestrator: false,
   focused: false,
   unseenDone: false,

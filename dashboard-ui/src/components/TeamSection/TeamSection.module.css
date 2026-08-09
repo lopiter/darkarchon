@@ -14,6 +14,30 @@
   margin-bottom: var(--space-team-to-card);
 }
 
+/* The name itself is the button. Styled as plain text until hovered — the
+   team header is a label first and a control second. */
+.labelButton {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.labelButton:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.doneMark {
+  color: var(--green);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
 /* Idle age sits beside the team name, deliberately quieter than it: this is
    context for a team you can already see, not an alert. */
 .badge {

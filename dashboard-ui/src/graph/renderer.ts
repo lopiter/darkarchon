@@ -21,6 +21,11 @@ import { shouldDrawLineage, topologyKey, type GraphNode } from './layout';
 export interface RendererCallbacks {
   /** Worker card clicked → id; background clicked → null. */
   onSelectWorker: (id: string | null) => void;
+  /** Team node clicked → team panel. A team fronted by its orchestrator has
+   *  no team node of its own; that node stays a worker click. */
+  onSelectTeam: (host: string, team: string) => void;
+  /** Right-click on a node. The React side decides what the menu holds. */
+  onContextMenu: (node: GraphNode, clientX: number, clientY: number) => void;
 }
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
@@ -301,7 +306,8 @@ export class GraphRenderer {
         this.cam.y = this.panStart.cy + (e.clientY - this.panStart.my);
       } else {
         const hit = this.hitTest(e.clientX, e.clientY);
-        this.hoverId = hit && hit.kind === 'worker' ? hit.id : null;
+        this.hoverId =
+          hit && (hit.kind === 'worker' || hit.kind === 'team') ? hit.id : null;
         this.syncCursor();
       }
     });
@@ -313,7 +319,7 @@ export class GraphRenderer {
       }
       if (e.button !== 0) return;
       const hit = this.hitTest(e.clientX, e.clientY);
-      if (hit && hit.kind === 'worker') {
+      if (hit && (hit.kind === 'worker' || hit.kind === 'team')) {
         this.ripples.push({
           x: hit.x + hit.w / 2,
           y: hit.y,
@@ -323,7 +329,11 @@ export class GraphRenderer {
         });
         this.lastUserCamAt = performance.now();
         this.focusOn(hit);
-        this.cb.onSelectWorker(hit.id);
+        if (hit.kind === 'team' && hit.team) {
+          this.cb.onSelectTeam(hit.team.host, hit.team.name);
+        } else {
+          this.cb.onSelectWorker(hit.id);
+        }
       } else {
         const [wx, wy] = this.toWorld(e.clientX, e.clientY);
         this.ripples.push({ x: wx, y: wy, t0: performance.now(), color: PAL.faint, big: false });
@@ -340,6 +350,15 @@ export class GraphRenderer {
       this.cam.y = e.clientY - (e.clientY - this.cam.y) * (s2 / this.cam.s);
       this.cam.s = s2;
     }, { passive: false });
+    on<'contextmenu'>(this.cv, 'contextmenu', (e) => {
+      const hit = this.hitTest(e.clientX, e.clientY);
+      // Only swallow the browser menu when there is something under the
+      // cursor to offer instead — a right-click on empty canvas stays the
+      // browser's.
+      if (!hit) return;
+      e.preventDefault();
+      this.cb.onContextMenu(hit, e.clientX, e.clientY);
+    });
   }
 
   private syncCursor(): void {

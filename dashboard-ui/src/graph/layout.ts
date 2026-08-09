@@ -23,6 +23,13 @@ export interface GraphNode {
   sub: string;
   parentId: string | null;
   worker?: Worker;
+  /**
+   * Set on whichever node stands for a team — the synthetic team node, or the
+   * orchestrator worker that replaces it. Carried as fields rather than parsed
+   * back out of the synthetic id, which would guess wrong on any host or team
+   * name containing the separator.
+   */
+  team?: { host: string; name: string };
   x: number;
   /** Vertical center. */
   y: number;
@@ -84,6 +91,7 @@ export function buildGraph(hosts: Host[]): GraphNode[] {
             1
           );
       if (orch) parent.worker = orch;
+      parent.team = { host: host.id, name: team.name };
       nodes.push(parent);
 
       const members = team.workers.filter((w) => w !== orch);

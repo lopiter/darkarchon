@@ -2,8 +2,12 @@
  * DESIGN.md Section 6 — Detail sidepanel.
  *
  * Sliding container + 6 sub-sections (header / awaiting zone / tmux target /
- * recent output / in-flight / mailbox / activity). Read-only by design — no
- * action buttons except the clipboard-copy on the tmux target.
+ * recent output / in-flight / mailbox / activity). Read-only by design — the
+ * only buttons copy to the clipboard.
+ *
+ * The same container also hosts the team view (TeamPanel) when a team label is
+ * clicked. One panel, one subject: the store keeps the two selections mutually
+ * exclusive.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -14,6 +18,7 @@ import type { Worker } from '../../types/domain';
 import type { RawDispatchEntry, RawTask } from '../../types/raw';
 import { sortWorkersForTeam } from '../../utils/sortWorkers';
 import styles from './DetailPanel.module.css';
+import { TeamPanelContent, useSelectedTeam } from './TeamPanel';
 
 interface Selected {
   worker: Worker;
@@ -89,11 +94,14 @@ const isAwaiting = (s: Worker['state']) => s.startsWith('awaiting_user:');
 
 export function DetailPanel() {
   const selected = useSelectedWorker();
+  const selectedTeam = useSelectedTeam();
   const closePanel = useDashboardStore((s) => s.closePanel);
-  const open = selected !== null;
+  const open = selected !== null || selectedTeam !== null;
 
   useEscapeKey(open, closePanel);
-  useArrowKeyNav(open);
+  // Worker-only: on a team the arrows would jump the panel to a single
+  // worker, which is the opposite of what the team view is for.
+  useArrowKeyNav(selected !== null);
 
   return (
     <>
@@ -103,9 +111,16 @@ export function DetailPanel() {
       <aside
         className={`${styles.panel} ${open ? styles.open : ''}`}
         aria-hidden={!open}
-        aria-label="Worker detail panel"
+        aria-label={selectedTeam ? 'Team detail panel' : 'Worker detail panel'}
       >
         {selected && <PanelContent selected={selected} onClose={closePanel} />}
+        {!selected && selectedTeam && (
+          <TeamPanelContent
+            host={selectedTeam.host}
+            team={selectedTeam.team}
+            onClose={closePanel}
+          />
+        )}
       </aside>
     </>
   );
