@@ -56,20 +56,38 @@ mkdir -p "$MAILBOX_DIR"
 mailbox_path() { echo "$MAILBOX_DIR/$1.jsonl"; }
 drained_path() { echo "$MAILBOX_DIR/$1.drained.jsonl"; }
 
-# notify <to> <from> — best-effort nudge so the recipient drains its mailbox.
-# The message is already on disk at this point; the trigger is only a hint, so
-# a dead pane or an over-long trigger is not an error. Recovery for a trigger
-# that never lands is `outstanding` + `renotify`.
+# new_id — a value distinct from every other this script produces. Used both as
+# a message id and as a notify tag (see below), where the only requirement is
+# that consecutive values differ. The random suffix carries that on its own, so
+# a `date` without %N support degrades the id's readability, not its uniqueness.
+new_id() {
+    echo "$(date +%s%N)-$(openssl rand -hex 2)"
+}
+
+# notify <to> <from> [<tag>] — best-effort nudge so the recipient drains its
+# mailbox. The message is already on disk at this point; the trigger is only a
+# hint, so a dead pane or an over-long trigger is not an error. Recovery for a
+# trigger that never lands is `outstanding` + `renotify`.
 #
 # Claude workers get the trigger over their messaging socket (peer_post) when
 # one is recorded: it queues while the worker is mid-turn instead of typing
 # into its prompt, and can't collide with a user attached to the pane. Codex
 # workers, invited/EXTERNAL workers, and any claude session without the
 # feature keep the tmux send-keys path.
+#
+# <tag> makes the socket payload unique, and callers must pass a fresh one.
+# Claude Code drops a message identical to one it just accepted from the same
+# sender (its message-loop brake), and this trigger names only the sender and
+# the recipient — so two sends from one worker in quick succession, or a
+# renotify close behind its original, produce byte-identical text and the
+# second is silently dropped. That failure is worst exactly where it lands: on
+# renotify, the tool you reach for when a trigger already went missing once.
+# The tag rides the socket payload only. tmux send-keys has no such dedup, and
+# the trigger it sends is on a 199-char budget worth leaving alone.
 notify() {
-    local to="$1" from="$2" target trigger
+    local to="$1" from="$2" tag="${3:-}" target trigger
     trigger="MAILBOX_NOTIFY from=${from} count_with: ${HERE}/mailbox.sh count ${to}"
-    peer_post "$to" "$from" "$trigger" && return 0
+    peer_post "$to" "$from" "${trigger}${tag:+ id=$tag}" && return 0
     target="$(worker_target "$to")"
     [ -z "$target" ] && return 0
     [ "${#trigger}" -gt 199 ] && return 0
@@ -84,14 +102,14 @@ notify() {
 # deliver_one <to> <from> <body> — write then notify. Echoes the message id.
 deliver_one() {
     local to="$1" from="$2" body="$3" msg_id created_at
-    msg_id="$(date +%s%N)-$(openssl rand -hex 2)"
+    msg_id="$(new_id)"
     created_at="$(date -u +%FT%TZ)"
     jq -n -c \
         --arg id "$msg_id" --arg from "$from" --arg to "$to" \
         --arg body "$body" --arg created_at "$created_at" \
         '{message_id:$id, from_worker:$from, to_worker:$to, body:$body, created_at:$created_at}' \
         >> "$(mailbox_path "$to")"
-    notify "$to" "$from"
+    notify "$to" "$from" "$msg_id"
     echo "$msg_id"
 }
 
@@ -216,9 +234,11 @@ case "$cmd" in
             exit 0
         fi
         # Re-fire the trigger for whoever sent the oldest undrained message; the
-        # payload is already on disk, this just re-rings the bell.
+        # payload is already on disk, this just re-rings the bell. A fresh tag
+        # rather than the message's own id: renotifying the same message twice
+        # must still produce two distinct triggers.
         from="$(jq -r -s 'if length>0 then .[0].from_worker else "external" end' "$f")"
-        notify "$who" "$from"
+        notify "$who" "$from" "$(new_id)"
         echo "renotified $who ($(wc -l < "$f" | tr -d ' ') undrained)"
         ;;
 
