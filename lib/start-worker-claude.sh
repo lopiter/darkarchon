@@ -166,8 +166,13 @@ if [ -x "$STATE_HOOK" ]; then
 
     HOOKS_CONFIG="$STATE_DIR/hooks-settings-${WORKER_NAME}.json"
     _hook() { printf "'%s' '%s' %s" "$STATE_HOOK" "$WORKER_NAME" "$1"; }
+    # crossSessionInbound accept: mailbox/dispatch triggers arrive over the
+    # worker's messaging socket (peer_post in _lib.sh), and this guarantees
+    # they're delivered rather than held behind an approval dialog nobody is
+    # watching, regardless of what permission modes the sender/receiver run.
     cat > "$HOOKS_CONFIG" <<EOF
 {
+  "crossSessionInbound": "accept",
   "hooks": {
     "SessionStart":      [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
     "UserPromptSubmit":  [{"hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
