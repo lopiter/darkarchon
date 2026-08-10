@@ -24,7 +24,7 @@ export function archiveCommand(teams: InactiveTeam[]): string {
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
-  const { copy, copied } = useClipboard();
+  const { copy, copied, failed } = useClipboard();
   return (
     <button
       type="button"
@@ -32,7 +32,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       onClick={() => copy(text)}
       title={text}
     >
-      {copied ? 'copied' : label}
+      {copied ? 'copied' : failed ? 'copy failed' : label}
     </button>
   );
 }

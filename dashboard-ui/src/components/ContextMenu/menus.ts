@@ -3,6 +3,9 @@
  *
  * Lives apart from ContextMenu so the row components stay presentational and
  * so the item lists can be asserted in tests without rendering a menu.
+ *
+ * Copy items declare the text (`copy:`) and let the menu perform the write —
+ * that is what lets a failed copy say so instead of looking like a success.
  */
 
 import type { MouseEvent } from 'react';
@@ -10,10 +13,6 @@ import { useDashboardStore } from '../../store/dashboard';
 import type { Team, Worker } from '../../types/domain';
 import { shutdownBlockers, teamCommands } from '../../utils/teamShutdown';
 import { openContextMenu, type MenuItem } from './ContextMenu';
-
-function copy(text: string): void {
-  navigator.clipboard?.writeText(text).catch(() => {});
-}
 
 export function workerMenuItems(worker: Worker): MenuItem[] {
   const attach = `tmux attach -t '${worker.tmuxTarget}'`;
@@ -25,9 +24,9 @@ export function workerMenuItems(worker: Worker): MenuItem[] {
     {
       label: 'Copy tmux target',
       hint: worker.tmuxTarget,
-      onSelect: () => copy(worker.tmuxTarget),
+      copy: worker.tmuxTarget,
     },
-    { label: 'Copy attach command', hint: attach, onSelect: () => copy(attach) },
+    { label: 'Copy attach command', hint: attach, copy: attach },
     {
       label: 'Copy kill-worker command',
       // Invited panes belong to someone else's session and kill-worker.sh
@@ -36,8 +35,7 @@ export function workerMenuItems(worker: Worker): MenuItem[] {
       hint: worker.external ? 'invited pane — refused' : `kill-worker.sh ${worker.name}`,
       danger: true,
       disabled: worker.external,
-      onSelect: () =>
-        copy(`"$DARKARCHON_HOME/lib/kill-worker.sh" '${worker.name}'`),
+      copy: `"$DARKARCHON_HOME/lib/kill-worker.sh" '${worker.name}'`,
     },
   ];
 }
@@ -57,19 +55,19 @@ export function teamMenuItems(host: string, team: Team): MenuItem[] {
       hint: busy ? `${blockers[0]!.label} — open panel` : cmds.stop || 'no owned session',
       danger: true,
       disabled: !cmds.stop,
-      onSelect: () => copy(cmds.stop),
+      copy: cmds.stop,
     },
     {
       label: 'Copy full wind-down',
       hint: 'stop → prune → archive',
       danger: true,
-      onSelect: () => copy(cmds.full),
+      copy: cmds.full,
     },
     {
       label: 'Copy archive command',
-      hint: cmds.archive ? 'teams.sh archive' : 'no state dir',
+      hint: cmds.archive ? 'teams.sh archive' : 'no state dir for this team',
       disabled: !cmds.archive,
-      onSelect: () => copy(cmds.archive ?? ''),
+      copy: cmds.archive ?? '',
     },
   ];
 }

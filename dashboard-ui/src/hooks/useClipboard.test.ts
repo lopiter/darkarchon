@@ -56,15 +56,45 @@ describe('useClipboard', () => {
     expect(result.current.copied).toBe(false);
   });
 
-  it('swallows clipboard errors silently', async () => {
+  // A rejection means the document was not focused or permission was refused.
+  // The legacy path is tried next; when that fails too the user has to be told,
+  // because the alternative is finding out at the paste.
+  it('reports a failure instead of swallowing it', async () => {
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: vi.fn(() => Promise.reject(new Error('denied'))) },
       configurable: true,
     });
+    document.execCommand = vi.fn(() => false);
     const { result } = renderHook(() => useClipboard(500));
     await act(async () => {
       await result.current.copy('x');
     });
     expect(result.current.copied).toBe(false);
+    expect(result.current.failed).toBe(true);
+  });
+
+  it('falls back to execCommand when the clipboard API is absent', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+    });
+    document.execCommand = vi.fn(() => true);
+    const { result } = renderHook(() => useClipboard(500));
+    await act(async () => {
+      await result.current.copy('over-plain-http');
+    });
+    expect(document.execCommand).toHaveBeenCalledWith('copy');
+    expect(result.current.copied).toBe(true);
+  });
+
+  // Empty would clear the clipboard — destroying whatever the user had for a
+  // command that turned out not to exist.
+  it('refuses to copy an empty string', async () => {
+    const { result } = renderHook(() => useClipboard(500));
+    await act(async () => {
+      await result.current.copy('');
+    });
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(result.current.failed).toBe(true);
   });
 });

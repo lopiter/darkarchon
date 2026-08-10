@@ -262,7 +262,7 @@ function CommandBlock({
   warn?: string | null;
   danger?: boolean;
 }) {
-  const { copy, copied } = useClipboard();
+  const { copy, copied, failed } = useClipboard();
   return (
     <div className={tp.cmdBlock}>
       <div className={tp.cmdHead}>
@@ -274,7 +274,7 @@ function CommandBlock({
           className={tp.cmdCopy}
           onClick={() => copy(command)}
         >
-          {copied ? '✓ copied' : '📋 copy'}
+          {copied ? '✓ copied' : failed ? '✗ select it below' : '📋 copy'}
         </button>
       </div>
       <code className={tp.cmd}>{command}</code>
@@ -285,14 +285,14 @@ function CommandBlock({
 }
 
 function CopyRow({ label, command }: { label: string; command: string }) {
-  const { copy, copied } = useClipboard();
+  const { copy, copied, failed } = useClipboard();
   return (
     <button
       type="button"
       className={tp.copyAll}
       onClick={() => copy(command)}
     >
-      {copied ? '✓ copied' : label}
+      {copied ? '✓ copied' : failed ? '✗ copy failed' : label}
     </button>
   );
 }

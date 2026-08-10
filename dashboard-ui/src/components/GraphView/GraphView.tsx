@@ -17,7 +17,11 @@ import type { Host } from '../../types/domain';
 import { initialAutoFocusState, nextAutoFocus } from '../../utils/autoFocus';
 import { diffWorkers, type Transition } from '../../utils/diffWorkers';
 import { isHostStale } from '../../utils/transform';
-import { openContextMenu, type MenuRequest } from '../ContextMenu/ContextMenu';
+import {
+  openContextMenu,
+  type MenuItem,
+  type MenuRequest,
+} from '../ContextMenu/ContextMenu';
 import { teamMenuItems, workerMenuItems } from '../ContextMenu/menus';
 import { EmptyState } from '../EmptyState/EmptyState';
 import { NotificationToggle } from '../NotificationToggle/NotificationToggle';
@@ -62,7 +66,7 @@ function graphNodeMenu(
             label: `Open team panel · ${team.name}`,
             onSelect: () =>
               useDashboardStore.getState().selectTeam(host.id, team.name),
-          });
+          } satisfies MenuItem);
         }
         return { x, y, title: w.name, items };
       }
