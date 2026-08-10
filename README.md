@@ -75,14 +75,16 @@ For a step-by-step manual install, see Quick start below.
 
 You don't have to memorize the scripts. `skills/darkarchon-team/SKILL.md` is a
 [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) gated on
-the phrase **"dark team"** — a bare "team" means Claude Code's native teams, so
-the explicit phrase keeps the two from colliding. Say "create a dark team" and
-Claude surveys your open tmux windows and asks which ones to enlist; say
-"invite 10:1 to the dark team" to register a single pane. Once the context is
-active, follow-ups like "have backend add a health endpoint" or "stop the team"
-route to the right darkarchon commands. `install.sh` symlinks the skill into
-`~/.claude/skills/darkarchon-team`, so `git pull` keeps it current — no
-re-copying.
+the word **"darkarchon"** — a bare "team" or "agent" means Claude Code's own
+teams and subagents, so naming the tool keeps the two from colliding. It covers
+every command in this README: say "set up a darkarchon team" and Claude surveys
+your open tmux windows and asks which to enlist; "invite 10:1 to darkarchon"
+registers a single pane. Once the context is active, follow-ups like "have
+backend add a health endpoint", "who's idle", or "kill backend" route to the
+right commands — including the distinction between deregistering a worker and
+killing its window, which the wrong guess gets destructively wrong.
+`install.sh` symlinks the skill into `~/.claude/skills/darkarchon-team`, so
+`git pull` keeps it current — no re-copying.
 
 Want to tailor the team-naming / project conventions to your own setup? Replace
 the symlink with a real copy under a different name (e.g.
