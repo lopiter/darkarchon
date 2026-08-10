@@ -116,6 +116,22 @@ describe('transformRawStatus team activity', () => {
     const t = transformRawStatus(res([rw({ team_name: 'alpha' })]))[0]!.teams[0]!;
     expect(t.activity).toBeUndefined();
   });
+
+  // The shutdown commands address a team by directory, so a missing state dir
+  // silently degrades the team panel to stop-only. Pinned here rather than
+  // left to the panel to notice.
+  it('carries the state dir onto the active team', () => {
+    const raw = res(
+      [rw({ team_name: 'alpha', target: 'a:1' })],
+      [team({ name: 'alpha', state_dir: '/s/alpha' })]
+    );
+    expect(transformRawStatus(raw)[0]!.teams[0]!.stateDir).toBe('/s/alpha');
+  });
+
+  it('marks invited workers external so shutdown leaves their session alone', () => {
+    const raw = res([rw({ team_name: 'alpha', external: true })]);
+    expect(transformRawStatus(raw)[0]!.teams[0]!.workers[0]!.external).toBe(true);
+  });
 });
 
 describe('team identity across hosts', () => {

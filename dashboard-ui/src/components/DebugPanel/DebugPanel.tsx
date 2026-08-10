@@ -92,6 +92,7 @@ const SPAWN_WORKER: Worker = {
   role: 'qa',
   tmuxTarget: 'myteam:9.1',
   process: 'claude',
+  external: false,
   isOrchestrator: false,
   unseenDone: false,
   enteredStateAt: new Date().toISOString(),

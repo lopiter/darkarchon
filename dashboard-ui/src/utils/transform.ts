@@ -76,6 +76,9 @@ export function transformRawStatus(raw: RawStatusResponse): Host[] {
   const activityByTeam = new Map(
     (raw.teams ?? []).map((t) => [teamKey(t.host, t.name), toActivity(t)])
   );
+  const stateDirByTeam = new Map(
+    (raw.teams ?? []).map((t) => [teamKey(t.host, t.name), t.state_dir])
+  );
   type Bucket = { teams: Map<string, Worker[]>; lastSeenMs: number };
   const byHost: Map<string, Bucket> = new Map();
 
@@ -108,6 +111,7 @@ export function transformRawStatus(raw: RawStatusResponse): Host[] {
         ([name, workers]): Team => ({
           name,
           activity: activityByTeam.get(teamKey(hostId, name)),
+          stateDir: stateDirByTeam.get(teamKey(hostId, name)),
           workers: stale
             ? workers.map((w) => ({ ...w, state: 'dead' as WorkerState }))
             : workers,
@@ -175,6 +179,7 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
     role: rw.role,
     tmuxTarget: rw.target,
     process: rw.process,
+    external: rw.external,
     detail: rw.detail || undefined,
     isOrchestrator: rw.is_orchestrator,
     spawnedBy: rw.spawned_by || undefined,

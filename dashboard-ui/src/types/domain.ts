@@ -28,6 +28,12 @@ export interface Worker {
   tmuxTarget: string;
   /** Agent process type — 'claude' | 'codex' | other */
   process: string;
+  /**
+   * Invited pane the team does not own. Shutdown treats these apart: the
+   * session belongs to whoever invited it, so killing it would take down
+   * windows that have nothing to do with this team.
+   */
+  external: boolean;
   detail?: string;
   isOrchestrator: boolean;
   /** Worker name of whoever spawned this one — lineage, e.g. 'hermes'. */
@@ -76,6 +82,10 @@ export interface Team {
   /** Aging metadata from the hub's team index. Absent when the hub predates
    *  it, or for synthetic buckets like '(unknown)' that match no state dir. */
   activity?: TeamActivity;
+  /** Absolute path of the team's state dir on its host. Same source and same
+   *  absence cases as `activity` — needed because prune/archive address a team
+   *  by directory, not by name (a worktree team's name is not its path). */
+  stateDir?: string;
 }
 
 /** Aging summary for one team, from `/api/status`'s `teams` array. */

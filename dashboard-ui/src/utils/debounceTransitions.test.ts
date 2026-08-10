@@ -14,6 +14,7 @@ function w(id: string): Worker {
     role: '',
     tmuxTarget: `${id}:1`,
     process: 'claude',
+    external: false,
     isOrchestrator: false,
     unseenDone: false,
     enteredStateAt: '2026-05-23T15:00:00Z',

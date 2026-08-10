@@ -30,6 +30,12 @@ function readInitialView(): ViewMode {
   }
   return 'graph';
 }
+/** Team identity for the detail panel. Name alone is not unique across hosts. */
+export interface TeamSelection {
+  host: string;
+  team: string;
+}
+
 export interface PulseEntry {
   color: PulseColor;
   /** Monotonic counter — bumped each markPulse() so the same color → same color
@@ -56,6 +62,9 @@ interface DashboardStore {
 
   /** Phase 3 — id of the worker whose detail panel is open. `null` = closed. */
   selectedWorkerId: string | null;
+  /** Team whose detail panel is open. Mutually exclusive with
+   *  `selectedWorkerId` — one panel, one subject. */
+  selectedTeam: TeamSelection | null;
 
   /** Graph view round — current top-level view, persisted to localStorage. */
   view: ViewMode;
@@ -85,6 +94,8 @@ interface DashboardStore {
 
   /** Phase 3 — open the detail panel for a given worker. `null` = closed. */
   selectWorker: (id: string) => void;
+  /** Open the detail panel on a whole team (shutdown view). */
+  selectTeam: (host: string, team: string) => void;
   /** Phase 3 — close the detail panel. */
   closePanel: () => void;
 
@@ -133,6 +144,7 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
   newUntil: new Map(),
   deadSince: new Map(),
   selectedWorkerId: null,
+  selectedTeam: null,
   view: readInitialView(),
 
   setView: (view) => {
@@ -221,10 +233,15 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
     }),
 
   selectWorker: (id) => {
-    set({ selectedWorkerId: id });
+    set({ selectedWorkerId: id, selectedTeam: null });
     get().ackWorker(id);
   },
-  closePanel: () => set({ selectedWorkerId: null }),
+  // No ack here: looking at a team's shutdown summary is not the same as
+  // reading each worker's result, and clearing their markers would erase the
+  // "unreviewed results" blocker this panel exists to show.
+  selectTeam: (host, team) =>
+    set({ selectedTeam: { host, team }, selectedWorkerId: null }),
+  closePanel: () => set({ selectedWorkerId: null, selectedTeam: null }),
 
   ackWorker: (id) => {
     const { hosts } = get();

@@ -10,7 +10,9 @@ import styles from './Dashboard.module.css';
 
 export function Dashboard() {
   const hosts = useDashboardStore((s) => s.hosts);
-  const panelOpen = useDashboardStore((s) => s.selectedWorkerId !== null);
+  const panelOpen = useDashboardStore(
+    (s) => s.selectedWorkerId !== null || s.selectedTeam !== null
+  );
   useCardKeyboardNav(!panelOpen);
 
   const totalWorkers = hosts.reduce(

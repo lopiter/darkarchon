@@ -14,6 +14,7 @@ function w(
     role: '',
     tmuxTarget: `${name}:1`,
     process: 'claude',
+    external: false,
     isOrchestrator: false,
     unseenDone: false,
     enteredStateAt,

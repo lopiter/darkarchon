@@ -74,7 +74,7 @@ export function TeamSection({ hostId, team, showDead, hostStale = false }: Props
 
   return (
     <section className={styles.section}>
-      <TeamLabel name={team.name} activity={team.activity} />
+      <TeamLabel hostId={hostId} team={team} />
       <div ref={rowsRef} className={styles.cards}>
         {renderList.map(({ worker, exiting }) => (
           <WorkerRow

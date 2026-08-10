@@ -17,10 +17,59 @@ import type { Host } from '../../types/domain';
 import { initialAutoFocusState, nextAutoFocus } from '../../utils/autoFocus';
 import { diffWorkers, type Transition } from '../../utils/diffWorkers';
 import { isHostStale } from '../../utils/transform';
+import { openContextMenu, type MenuRequest } from '../ContextMenu/ContextMenu';
+import { teamMenuItems, workerMenuItems } from '../ContextMenu/menus';
 import { EmptyState } from '../EmptyState/EmptyState';
 import { NotificationToggle } from '../NotificationToggle/NotificationToggle';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import styles from './GraphView.module.css';
+
+/**
+ * Right-click menu for a graph node, resolved against the live store.
+ *
+ * A team-parent node carries `team` whether it is the synthetic team node or
+ * the orchestrator standing in for it, so an orchestrator's menu holds its own
+ * worker actions *and* a way into the team it fronts — otherwise a team with
+ * an orchestrator would have no reachable team panel in this view at all.
+ *
+ * Host nodes have nothing to offer and return null, which leaves the browser's
+ * own menu in place rather than opening an empty one.
+ */
+function graphNodeMenu(
+  node: GraphNode,
+  x: number,
+  y: number
+): MenuRequest | null {
+  const { hosts } = useDashboardStore.getState();
+  const host = node.team ? hosts.find((h) => h.id === node.team!.host) : undefined;
+  const team = host?.teams.find((t) => t.name === node.team!.name);
+
+  if (node.kind === 'team') {
+    if (!host || !team) return null;
+    return { x, y, title: `${team.name} · ${host.id}`, items: teamMenuItems(host.id, team) };
+  }
+
+  if (node.kind === 'worker') {
+    // Re-read the worker from the store: `node.worker` is a snapshot from
+    // whichever layout pass built it.
+    for (const h of hosts) {
+      for (const t of h.teams) {
+        const w = t.workers.find((w) => w.id === node.id);
+        if (!w) continue;
+        const items = workerMenuItems(w);
+        if (host && team) {
+          items.push({
+            label: `Open team panel · ${team.name}`,
+            onSelect: () =>
+              useDashboardStore.getState().selectTeam(host.id, team.name),
+          });
+        }
+        return { x, y, title: w.name, items };
+      }
+    }
+  }
+  return null;
+}
 
 interface FeedItem {
   key: number;
@@ -78,6 +127,12 @@ export function GraphView() {
         const { selectWorker, closePanel } = useDashboardStore.getState();
         if (id) selectWorker(id);
         else closePanel();
+      },
+      onSelectTeam: (host, team) =>
+        useDashboardStore.getState().selectTeam(host, team),
+      onContextMenu: (node, x, y) => {
+        const menu = graphNodeMenu(node, x, y);
+        if (menu) openContextMenu(menu);
       },
     });
     rendererRef.current = renderer;
@@ -163,7 +218,8 @@ export function GraphView() {
           </div>
         )}
         <div className={styles.hint}>
-          <kbd>Space</kbd> + drag to pan · scroll to zoom · click a node for detail
+          <kbd>Space</kbd> + drag to pan · scroll to zoom · click a node for
+          detail · right-click for actions
         </div>
       </div>
     </>

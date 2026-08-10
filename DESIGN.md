@@ -471,6 +471,38 @@ After the user responds to a worker (e.g., permission approved → transition to
 - collapsed by default. expands on click
 - only a summary like "3 events / 5m" is always visible
 
+### 6.5 Team Mode
+
+The same panel takes a team as its subject when a team label (Cards) or team
+node (Graph) is clicked. One panel, one subject — the two selections are
+mutually exclusive in the store.
+
+Structure: header (name · host · worker count · idle age, with a
+ready-to-stop / still-running pill) → **wind-down check** → **workers** →
+**shutdown**.
+
+- The wind-down check lists every reason not to stop, naming the workers behind
+  each: busy, awaiting user, dispatch in flight, unreviewed result, undelivered
+  mail, rate limited. Dead and unknown workers are not reasons. Empty ⇒ safe to
+  stop, and the team label carries a ✓ in the list so the answer is visible
+  without opening the panel.
+- Shutdown shows the commands in dependency order (kill session → prune
+  registrations → archive state dir) with per-step and whole-sequence copy.
+
+Read-only, like the rest of the panel — no button here runs anything. Killing a
+session destroys every pane's context and only the owning host can do it, so
+the panel's job is to say whether it is safe and to hand over the exact paste.
+Sessions are derived from live worker targets, never guessed from the team
+name; invited (EXTERNAL) panes are excluded from the kill and named in a notice.
+
+### 6.6 Context Menu
+
+Right-click opens a menu at the cursor — team label / team node → the shutdown
+commands; worker row / worker node → tmux target, attach command,
+`kill-worker.sh` (disabled for invited panes, which the script refuses anyway).
+Every item either copies or opens a panel. One menu at a time, dismissed by
+Escape, outside press, scroll, or resize.
+
 ---
 
 ## 7. Animation Rules

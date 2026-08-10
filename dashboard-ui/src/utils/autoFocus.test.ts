@@ -11,6 +11,7 @@ function w(id: string, state: WorkerState, overrides: Partial<Worker> = {}): Wor
     role: '',
     tmuxTarget: `${id}:1`,
     process: 'claude',
+    external: false,
     isOrchestrator: false,
     unseenDone: false,
     enteredStateAt: '2026-05-23T15:00:00Z',

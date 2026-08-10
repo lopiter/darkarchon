@@ -617,6 +617,33 @@ Two views, toggled by the bottom-left pill (persisted):
 - **Graph** (default) — canvas tree of host → orchestrator → workers. Busy workers glow with a live spinner, in-flight dispatches stream particles from the actual sender (resolved from `incoming_dispatches[].label`), and `spawned_by` lineage (registry `WORKER_<sn>_SPAWNED_BY`, recorded automatically from `$EE_WORKER_NAME` when an orchestrator/hermes calls `spawn-worker.sh`, or via `--spawned-by`) renders as a dashed violet link — so hermes-spawned orchestrators stay visibly attached to hermes even across teams. Space+drag pans, scroll zooms, click opens the detail panel.
 - **Cards** — the compact row layout, light/dark themed.
 
+### Team panel — winding a team down
+
+Click a team (its label in Cards, its node in Graph) to open the team side of
+the detail panel. It answers the question you have when a batch of work looks
+finished but you cannot prove it by eye:
+
+- **Wind-down check** — every reason not to stop yet, each naming the workers
+  behind it: still working, waiting on you, dispatch in flight, results you
+  haven't read, undelivered mailbox messages. Nothing left ⇒ *safe to stop*,
+  and the team label carries a green ✓ so you can see that without opening
+  anything. Dead workers are not blockers — a team of corpses is exactly the
+  one worth tearing down.
+- **Shutdown commands**, in the order they have to run: kill the session →
+  `prune-workers.sh` (the kill leaves the names registered) → `teams.sh
+  archive`. Copy one step or the whole sequence.
+
+The dashboard never runs any of it. The kill takes every pane's context with
+it and only the machine holding the state dir can do it, so the panel hands
+you the paste and names the host to run it on. Sessions come from the live
+worker targets rather than from the team name — a worktree team's name is not
+its session. Invited (EXTERNAL) panes are excluded and called out by name:
+their session belongs to whoever invited them, so it is never killed.
+
+**Right-click** does the same without the panel — on a team (label or node) for
+the shutdown commands, on a worker for its tmux target, attach command, and
+`kill-worker.sh`.
+
 ---
 
 ## Multi-host setup
