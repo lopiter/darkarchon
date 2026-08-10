@@ -1,26 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { copyText } from '../utils/copyText';
 
 /**
- * Copy text to the OS clipboard with a transient `copied` flag for UI
- * feedback. The flag flips back to false after `feedbackMs` (default 1s).
+ * Copy text to the OS clipboard with a transient status for UI feedback.
+ * `copied` and `failed` both clear after `feedbackMs` (default 1s).
+ *
+ * A failure is reported rather than swallowed: a copy button that does
+ * nothing, silently, is indistinguishable from one that worked, and the user
+ * only finds out at the paste.
  */
 export function useClipboard(feedbackMs = 1000): {
   copy: (text: string) => Promise<void>;
   copied: boolean;
+  failed: boolean;
 } {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const copy = useCallback(
     async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => setCopied(false), feedbackMs);
-      } catch {
-        // Surface failure silently — Phase 4 can add a static "copy failed" hint.
-      }
+      const ok = await copyText(text);
+      setStatus(ok ? 'copied' : 'failed');
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setStatus('idle'), feedbackMs);
     },
     [feedbackMs]
   );
@@ -32,5 +34,5 @@ export function useClipboard(feedbackMs = 1000): {
     []
   );
 
-  return { copy, copied };
+  return { copy, copied: status === 'copied', failed: status === 'failed' };
 }

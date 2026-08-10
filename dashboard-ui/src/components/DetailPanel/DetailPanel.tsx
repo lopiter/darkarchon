@@ -222,7 +222,7 @@ function AwaitingZone({ detail }: { detail: string }) {
 }
 
 function TmuxTargetSection({ target }: { target: string }) {
-  const { copy, copied } = useClipboard();
+  const { copy, copied, failed } = useClipboard();
   return (
     <section className={styles.section}>
       <div className={styles.sectionLabel}>Tmux Target</div>
@@ -235,7 +235,7 @@ function TmuxTargetSection({ target }: { target: string }) {
         <span
           className={`${styles.tmuxCopyLabel} ${copied ? styles.copied : ''}`}
         >
-          {copied ? '✓ copied' : '📋 copy'}
+          {copied ? '✓ copied' : failed ? '✗ copy failed' : '📋 copy'}
         </span>
       </button>
       <span className={styles.tmuxHint}>

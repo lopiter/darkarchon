@@ -62,6 +62,34 @@
   background: rgba(226, 75, 74, 0.1);
 }
 
+.ok {
+  font-size: 10.5px;
+  color: var(--green);
+  flex: none;
+}
+.bad {
+  font-size: 10.5px;
+  color: var(--red);
+  flex: none;
+}
+
+/* Last resort when even execCommand refused: the text has to be reachable
+   somehow, and a pre-selected box needs no clipboard permission at all. */
+.fallbackBox {
+  margin: 4px;
+  min-height: 66px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-terminal);
+  border: 1px solid var(--red-border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  white-space: pre;
+}
+
 /* The command the item will copy — shown so nothing lands on the clipboard
    unseen. Truncated rather than wrapped: the panel shows it in full. */
 .hint {
