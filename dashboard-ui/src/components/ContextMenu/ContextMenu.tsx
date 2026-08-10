@@ -37,19 +37,33 @@ export interface MenuRequest {
   items: MenuItem[];
 }
 
-type Listener = (req: MenuRequest | null) => void;
-let listener: Listener | null = null;
+/**
+ * Opening the menu goes through a DOM event on `window` rather than a
+ * module-level callback, and that is not incidental.
+ *
+ * The obvious version — `let listener` up here, the component assigning to it
+ * on mount — silently breaks under HMR, which this app always runs with
+ * (`dashboard-ui.sh start` is `npm run dev`). Editing any UI file makes Vite
+ * re-evaluate this module; the caller then imports a *fresh* copy whose
+ * `listener` is still null while the mounted menu is registered on the old
+ * one. Right-click stops doing anything at all, with no error, until someone
+ * reloads — and "the menu just doesn't open" is very hard to tell apart from
+ * "the feature is broken".
+ *
+ * `window` is the one registry every copy of this module agrees on, so the two
+ * halves cannot drift apart no matter how the module graph is rebuilt.
+ */
+const OPEN_EVENT = 'darkarchon:context-menu';
 
 /** Open the context menu. Call from an `onContextMenu` handler. */
 export function openContextMenu(req: MenuRequest): void {
-  listener?.(req);
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: req }));
 }
 
 export function closeContextMenu(): void {
-  listener?.(null);
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: null }));
 }
 
-/** Mount once, near the app root. */
 /** Outcome of the copy the user just asked for, held until the menu closes. */
 interface CopyStatus {
   label: string;
@@ -62,6 +76,7 @@ interface CopyStatus {
  *  get the command, so it waits to be dismissed. */
 const COPIED_CLOSE_MS = 700;
 
+/** Mount once, near the app root. */
 export function ContextMenu() {
   const [req, setReq] = useState<MenuRequest | null>(null);
   const [status, setStatus] = useState<CopyStatus | null>(null);
@@ -69,13 +84,13 @@ export function ContextMenu() {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
-    listener = (next) => {
+    const onOpen = (e: Event) => {
+      const next = (e as CustomEvent<MenuRequest | null>).detail;
       setStatus(null);
       setReq(next);
     };
-    return () => {
-      listener = null;
-    };
+    window.addEventListener(OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_EVENT, onOpen);
   }, []);
 
   const onSelect = (item: MenuItem) => {
