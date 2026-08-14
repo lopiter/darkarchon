@@ -35,6 +35,7 @@ from lib.tmux_scanner import scan_panes  # noqa: E402
 from lib.worker_resolver import parse_registry_file, resolve_workers  # noqa: E402
 from lib.team_index import build_index, discover_teams  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
+from lib.peer_sessions import annotate_workers_with_peer_names  # noqa: E402
 from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
 
 
@@ -123,6 +124,10 @@ def report_once(cfg: AgentConfig) -> int:
     # Heartbeat liveness has the final say — a dead worker is dead regardless of
     # any stale hook state, so this runs AFTER the hook overlay.
     workers = annotate_workers(workers, *state_dirs)
+    # Claude Code's own session registry (~/.claude/sessions) names every live
+    # session for cross-session messaging; joining it by pane gives each Claude
+    # pane a copyable `peer_name` any local session can SendMessage to.
+    workers = annotate_workers_with_peer_names(workers)
     # A host's state dirs are only visible to that host, so the team index has
     # to be built here and carried up rather than read off the hub's own disk —
     # otherwise a remote host's teams have no age at all, and one whose name

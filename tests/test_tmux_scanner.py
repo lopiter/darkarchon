@@ -6,12 +6,12 @@ from lib.tmux_scanner import list_llm_panes, scan_panes
 
 
 def test_list_llm_panes_filters_by_process_name():
-    # Format: pid attached win_active pane_active process target window cwd
+    # Format: pid attached win_active pane_active window_id pane_id process target window cwd
     fake_output = (
-        "12345 1 1 1 @0 claude alpha:1.0 alpha-window /Users/u/repo1\n"
-        "12346 1 1 0 @1 zsh    alpha:2.0 alpha-window /Users/u/repo2\n"
-        "12347 0 0 1 @2 claude beta:work-1.0 beta-window /Users/u/repo3\n"
-        "12348 0 0 0 @3 vim    beta:work-1.1 beta-window /Users/u/repo3\n"
+        "12345 1 1 1 @0 %0 claude alpha:1.0 alpha-window /Users/u/repo1\n"
+        "12346 1 1 0 @1 %1 zsh    alpha:2.0 alpha-window /Users/u/repo2\n"
+        "12347 0 0 1 @2 %2 claude beta:work-1.0 beta-window /Users/u/repo3\n"
+        "12348 0 0 0 @3 %3 vim    beta:work-1.1 beta-window /Users/u/repo3\n"
     )
     with patch("lib.tmux_scanner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
@@ -22,6 +22,8 @@ def test_list_llm_panes_filters_by_process_name():
     assert panes[0].process == "claude"
     assert panes[0].cwd == "/Users/u/repo1"
     assert panes[0].window_name == "alpha-window"
+    assert panes[0].window_id == "@0"
+    assert panes[0].pane_id == "%0"
     assert panes[0].focused is True  # attached + win_active + pane_active
     assert panes[1].target == "beta:work-1.0"
     assert panes[1].focused is False  # detached session
@@ -29,9 +31,9 @@ def test_list_llm_panes_filters_by_process_name():
 
 def test_list_llm_panes_extends_allowed_list():
     fake_output = (
-        "12345 1 1 1 @0 claude alpha:1.0 alpha-window /Users/u/repo1\n"
-        "12346 1 1 0 @1 codex  alpha:2.0 alpha-window /Users/u/repo2\n"
-        "12347 0 0 1 @2 gemini beta:work-1.0 beta-window /Users/u/repo3\n"
+        "12345 1 1 1 @0 %0 claude alpha:1.0 alpha-window /Users/u/repo1\n"
+        "12346 1 1 0 @1 %1 codex  alpha:2.0 alpha-window /Users/u/repo2\n"
+        "12347 0 0 1 @2 %2 gemini beta:work-1.0 beta-window /Users/u/repo3\n"
     )
     with patch("lib.tmux_scanner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
@@ -45,10 +47,10 @@ def test_list_llm_panes_focused_requires_attached_active_window_and_pane():
     active one AND the pane is active in that window — the exact pane a client
     is currently looking at. Any zero drops focus."""
     fake_output = (
-        "1 1 1 1 @4 claude a:1.0 w /r\n"  # viewed: all three set
-        "2 0 1 1 @5 claude b:1.0 w /r\n"  # detached session
-        "3 2 0 1 @6 claude c:1.0 w /r\n"  # window not active (other window shown)
-        "4 1 1 0 @7 claude d:1.0 w /r\n"  # pane not active (split partner)
+        "1 1 1 1 @4 %4 claude a:1.0 w /r\n"  # viewed: all three set
+        "2 0 1 1 @5 %5 claude b:1.0 w /r\n"  # detached session
+        "3 2 0 1 @6 %6 claude c:1.0 w /r\n"  # window not active (other window shown)
+        "4 1 1 0 @7 %7 claude d:1.0 w /r\n"  # pane not active (split partner)
     )
     with patch("lib.tmux_scanner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
@@ -91,8 +93,8 @@ def test_list_llm_panes_returns_empty_when_tmux_fails():
 def test_list_llm_panes_includes_window_name_matches():
     """Panes whose window_name matches `window_names` are included even with non-LLM process."""
     fake_output = (
-        "12345 1 1 1 @0 zsh    sess:1.0 claude /Users/u/repo1\n"  # zsh in 'claude' window
-        "12346 1 1 0 @1 vim    sess:2.0 other /Users/u/repo2\n"  # vim in 'other' window
+        "12345 1 1 1 @0 %0 zsh    sess:1.0 claude /Users/u/repo1\n"  # zsh in 'claude' window
+        "12346 1 1 0 @1 %1 vim    sess:2.0 other /Users/u/repo2\n"  # vim in 'other' window
     )
     with patch("lib.tmux_scanner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
@@ -188,8 +190,8 @@ def test_list_llm_panes_discovers_registered_node_worker():
     """list_llm_panes includes a `node` pane (not normally an LLM candidate) when
     it matches a registered worker target in known_kinds."""
     fake_output = (
-        "111 1 1 1 @8 node codextest:tc.0 tc /r\n"          # codex-as-node, registered
-        "222 1 1 0 @9 node random:1.0 random-window /x\n"   # unrelated node, not registered
+        "111 1 1 1 @8 %8 node codextest:tc.0 tc /r\n"          # codex-as-node, registered
+        "222 1 1 0 @9 %9 node random:1.0 random-window /x\n"   # unrelated node, not registered
     )
     with patch("lib.tmux_scanner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
