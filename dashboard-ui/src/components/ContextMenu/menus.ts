@@ -28,6 +28,15 @@ export function workerMenuItems(worker: Worker): MenuItem[] {
     },
     { label: 'Copy attach command', hint: attach, copy: attach },
     {
+      label: 'Copy session name',
+      // The Claude cross-session messaging address — paste it into any local
+      // Claude session ("<name>에게 메시지 보내줘") to reach this worker
+      // directly. Absent for codex/gemini panes and pre-messaging builds.
+      hint: worker.peerName ?? 'no messaging session in this pane',
+      disabled: !worker.peerName,
+      copy: worker.peerName ?? '',
+    },
+    {
       label: 'Copy kill-worker command',
       // Invited panes belong to someone else's session and kill-worker.sh
       // refuses them outright — offering the command would only produce an

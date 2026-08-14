@@ -216,6 +216,20 @@ $DARKARCHON_HOME/questions.sh dismiss <id> ["<reason>"]
 $DARKARCHON_HOME/questions.sh clear-answered
 ```
 
+**Message a live session directly** — no team membership, no mailbox:
+
+Claude Code names every session for its own cross-session messaging, and the
+dashboard shows that name (e.g. `darkarchon-c3`) on any live claude pane,
+copyable from the detail panel or the right-click menu. Pasted into any local
+claude session, the built-in `SendMessage` tool reaches that pane.
+
+This is raw session chat: no task record, no result file, no busy check. It is
+the way to reach a pane that is not a team worker at all — `dispatch-safe.sh`
+stays the tool for tracked work, `mailbox.sh` for team messaging. The first send
+to a session outside the conversation may come back asking to confirm the target
+by its ref (`darkarchon-c3 [ad0f0f]`); re-send with the ref it prints. codex and
+gemini panes have no session name.
+
 ## History
 
 ```bash

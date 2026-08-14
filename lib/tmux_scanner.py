@@ -81,6 +81,10 @@ class PaneInfo:
     # tmux's immutable handle for the window ('@5'). Unique per tmux server and
     # stable for the window's whole life, unlike name or index.
     window_id: str = ""
+    # tmux's immutable handle for the pane ('%12'). Joined against the pane
+    # reference Claude Code records in ~/.claude/sessions/<pid>.json
+    # ("session:@window.%pane") to recover the session's peer-messaging name.
+    pane_id: str = ""
     # True when an attached client is currently viewing this pane (session
     # attached + window active in its session + pane active in its window).
     # Used to suppress desktop notifications for the pane the user is looking
@@ -118,10 +122,10 @@ def list_llm_panes(
             "list-panes",
             "-a",
             "-F",
-            # session_attached/window_active/pane_active/window_id come right
-            # after pane_pid (all single tokens) so pane_current_path stays the
-            # trailing remainder and can still contain spaces.
-            "#{pane_pid} #{session_attached} #{window_active} #{pane_active} #{window_id} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
+            # session_attached/window_active/pane_active/window_id/pane_id come
+            # right after pane_pid (all single tokens) so pane_current_path
+            # stays the trailing remainder and can still contain spaces.
+            "#{pane_pid} #{session_attached} #{window_active} #{pane_active} #{window_id} #{pane_id} #{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_path}",
         ]
     )
     if rc != 0:
@@ -129,10 +133,10 @@ def list_llm_panes(
 
     panes: list[PaneInfo] = []
     for line in out.splitlines():
-        parts = line.split(None, 8)
-        if len(parts) < 9:
+        parts = line.split(None, 9)
+        if len(parts) < 10:
             continue
-        (pid, attached, win_active, pane_active, window_id,
+        (pid, attached, win_active, pane_active, window_id, pane_id,
          process, target, window_name, cwd) = parts
         match_proc = process in allowed_processes or bool(_NODE_VERSION_RE.match(process))
         match_window = window_name in window_names
@@ -149,6 +153,7 @@ def list_llm_panes(
                 target=target,
                 window_name=window_name,
                 window_id=window_id,
+                pane_id=pane_id,
                 cwd=cwd,
                 focused=focused,
             )
@@ -310,6 +315,7 @@ def scan_panes(
                 "process": effective_process,
                 "window_name": p.window_name,
                 "window_id": p.window_id,
+                "pane_id": p.pane_id,
                 "cwd": p.cwd,
                 "pane_pid": p.pid,
                 "focused": p.focused,
