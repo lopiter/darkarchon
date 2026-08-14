@@ -183,6 +183,7 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
     detail: rw.detail || undefined,
     isOrchestrator: rw.is_orchestrator,
     spawnedBy: rw.spawned_by || undefined,
+    peerName: rw.peer_name || undefined,
     focused: rw.focused ?? false,
     enteredStateAt: new Date(refTs).toISOString(),
     dispatchOut: rw.outgoing_dispatches.length > 0,

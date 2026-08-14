@@ -81,6 +81,13 @@ export interface RawWorker {
    */
   acked_at?: number;
   /**
+   * Claude Code cross-session messaging name from ~/.claude/sessions on the
+   * worker's host (e.g. 'darkarchon-c3'). Any local Claude session can
+   * SendMessage to it. Absent for codex/gemini panes, dead sessions, and
+   * pre-messaging Claude builds.
+   */
+  peer_name?: string;
+  /**
    * Terminal tail — last N lines of stdout/stderr from the worker pane.
    *
    * Phase 3a uses this to render the panel's Recent Output section

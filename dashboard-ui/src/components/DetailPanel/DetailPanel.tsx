@@ -141,6 +141,7 @@ function PanelContent({
         <AwaitingZone detail={worker.detail} />
       )}
       <TmuxTargetSection target={worker.tmuxTarget} />
+      {worker.peerName && <SessionNameSection name={worker.peerName} />}
       {worker.recentOutput && worker.recentOutput.length > 0 && (
         <RecentOutputSection lines={worker.recentOutput} />
       )}
@@ -240,6 +241,35 @@ function TmuxTargetSection({ target }: { target: string }) {
       </button>
       <span className={styles.tmuxHint}>
         In your terminal: <code>tmux attach -t [paste]</code>
+      </span>
+    </section>
+  );
+}
+
+/**
+ * The worker's Claude cross-session messaging address. Same interaction as the
+ * tmux target: one button, copy is the whole point — the name only becomes
+ * useful once pasted into another Claude session's prompt.
+ */
+function SessionNameSection({ name }: { name: string }) {
+  const { copy, copied, failed } = useClipboard();
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionLabel}>Session Name</div>
+      <button
+        type="button"
+        className={styles.tmuxButton}
+        onClick={() => copy(name)}
+      >
+        <span className={styles.tmuxTargetText}>{name}</span>
+        <span
+          className={`${styles.tmuxCopyLabel} ${copied ? styles.copied : ''}`}
+        >
+          {copied ? '✓ copied' : failed ? '✗ copy failed' : '📋 copy'}
+        </span>
+      </button>
+      <span className={styles.tmuxHint}>
+        Any local Claude session can message it: <code>[paste]에게 메시지 보내줘</code>
       </span>
     </section>
   );

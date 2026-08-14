@@ -39,6 +39,12 @@ export interface Worker {
   /** Worker name of whoever spawned this one — lineage, e.g. 'hermes'. */
   spawnedBy?: string;
   /**
+   * Claude Code cross-session messaging address (e.g. 'darkarchon-c3').
+   * Copy it into any local Claude session to SendMessage this worker directly.
+   * Undefined when the pane hosts no live messaging-capable Claude session.
+   */
+  peerName?: string;
+  /**
    * True when the user is currently viewing this pane (attached tmux client,
    * active window + pane). OS push is suppressed for the focused pane — no
    * alert needed for the pane you're already looking at / typing in.

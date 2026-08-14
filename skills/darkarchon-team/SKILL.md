@@ -170,6 +170,21 @@ $DARKARCHON_HOME/dashboard.sh start        # JSON API hub
 $DARKARCHON_HOME/dashboard-ui.sh start     # web UI (Vite) on http://localhost:5173
 ```
 
+**Message a session directly by name** (no team membership needed):
+
+Every live Claude Code pane on the dashboard shows a **Session Name** (e.g.
+`darkarchon-c3`) — its cross-session messaging address, copyable from the
+worker's detail panel or right-click menu. From ANY local Claude session, that
+name works with the built-in `SendMessage` tool; the user just pastes it:
+"`darkarchon-c3`에게 ~라고 전해줘".
+
+- First send to a session outside the current conversation may error asking to
+  confirm the target with its ref (`darkarchon-c3 [ad0f0f]`); re-send with the
+  ref from that error message.
+- This is raw session-to-session chat: no task record, no result file, no
+  busy-check. For tracked work on team workers keep using `dispatch-safe.sh`.
+- codex/gemini panes have no session name — they are not Claude sessions.
+
 ## Conventions
 
 - The worker **name** is your handle for dispatch — keep it stable and unique
