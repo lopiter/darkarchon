@@ -61,9 +61,11 @@ mcp__darkarchon__mailbox_send(to, body)
 mcp__darkarchon__mailbox_drain()
 ```
 
-# Drain when a MAILBOX_NOTIFY trigger appears in your input, and act on what you
-# find — draining is what marks the messages read. Leaving them queued makes the
-# sender's tooling report the message as never delivered.
+# Drain when a MAILBOX_NOTIFY trigger appears in your input — whether typed
+# into your prompt or delivered as a message from another Claude session (both
+# transports carry the same trigger text) — and act on what you find. Draining
+# is what marks the messages read. Leaving them queued makes the sender's
+# tooling report the message as never delivered.
 # Draining is destructive: messages move to <self>.drained.jsonl.
 
 (Legacy path, same files: `$EE_TEAM_ROOT/lib/mailbox.sh send|read`.)

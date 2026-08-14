@@ -2,7 +2,7 @@
 
 Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
-> tmux window = isolated claude process · filesystem = message bus · tmux send-keys = short trigger
+> tmux window = isolated claude process · filesystem = message bus · short trigger over the worker's inbox socket (send-keys for codex)
 
 Use when one claude session — or Claude Code's built-in `Task` sub-agent — can't cover the work. Sub-agents share the parent's cwd and `.claude/` config; darkarchon workers don't.
 
@@ -75,14 +75,16 @@ For a step-by-step manual install, see Quick start below.
 
 You don't have to memorize the scripts. `skills/darkarchon-team/SKILL.md` is a
 [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) gated on
-the phrase **"dark team"** — a bare "team" means Claude Code's native teams, so
-the explicit phrase keeps the two from colliding. Say "create a dark team" and
-Claude surveys your open tmux windows and asks which ones to enlist; say
-"invite 10:1 to the dark team" to register a single pane. Once the context is
-active, follow-ups like "have backend add a health endpoint" or "stop the team"
-route to the right darkarchon commands. `install.sh` symlinks the skill into
-`~/.claude/skills/darkarchon-team`, so `git pull` keeps it current — no
-re-copying.
+the word **"darkarchon"** — a bare "team" or "agent" means Claude Code's own
+teams and subagents, so naming the tool keeps the two from colliding. It covers
+every command in this README: say "set up a darkarchon team" and Claude surveys
+your open tmux windows and asks which to enlist; "invite 10:1 to darkarchon"
+registers a single pane. Once the context is active, follow-ups like "have
+backend add a health endpoint", "who's idle", or "kill backend" route to the
+right commands — including the distinction between deregistering a worker and
+killing its window, which the wrong guess gets destructively wrong.
+`install.sh` symlinks the skill into `~/.claude/skills/darkarchon-team`, so
+`git pull` keeps it current — no re-copying.
 
 Want to tailor the team-naming / project conventions to your own setup? Replace
 the symlink with a real copy under a different name (e.g.
@@ -177,7 +179,8 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **agent** (`agent.py`) — per-host process that scans tmux for claude panes, captures their state, merges in heartbeat freshness, and POSTs to the hub.
 - **hub** (`dashboard.py`) — aggregator. Stores state by host, broadcasts SSE events, serves the React UI. Queries `tasks.db` for dispatch history.
 - **dashboard-ui** — React + Vite app at `dashboard-ui/`. Subscribes to `/api/events` (SSE) and polls `/api/status` as a fallback.
-- **dispatch** — writes a task row to `tasks.db`, sends a short tmux trigger, then tails the result file. Long payloads never go through tmux's send-keys (200-char limit, sentinel-parsing fragility). State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
+- **dispatch** — writes a task row to `tasks.db`, sends a short trigger, then tails the result file. State transitions (pending → running → completed/failed/timeout) are validated by the SQLite task store.
+- **trigger transport** (`peer_post` in `lib/_lib.sh`) — a claude worker's trigger is posted to its [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging) inbox socket, whose path `lib/state-hook.sh` records from `CLAUDE_CODE_MESSAGING_SOCKET`. The receiver queues it while the worker is mid-turn, so the trigger can't collide with a user typing in the pane. codex workers, invited (EXTERNAL) workers, and any claude session without the feature fall back to `tmux send-keys`. Payloads still travel by file for both: the socket has no return channel a shell script can read, so the result file stays the completion signal — and a socket trigger is deduped if it repeats a message the receiver just took from the same sender, which is why every trigger carries a unique tag.
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
 - **team index** (`lib/team_index.py`) — discovers every team state dir on a host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Built by each agent for its own machine and reported upward, since a state dir is only visible to the host holding it. Shared by the agent, the hub, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
@@ -243,7 +246,7 @@ sequenceDiagram
     disp->>fs: /tmp/darkarchon-<uid>/p-<id>.txt = contract + prompt
     disp->>store: insert row (pending, attempt=1)
     store->>fs: tasks.db append
-    disp->>tmux: send-keys "Read p-<id> Write r-<id>-a1 output DONE-<id>-a1"
+    disp->>claude: inbox socket: "Read p-<id> Write r-<id>-a1 output DONE-<id>-a1"
     disp->>store: update-status → running
 
     loop poll every 3s
@@ -259,7 +262,7 @@ sequenceDiagram
     disp->>User: stdout = result
 ```
 
-Prompt / result travel via the filesystem (tmux's 200-char trigger budget is too tight). tmux only carries the short "go" signal. SQLite stores every state transition with state-machine validation.
+Prompt / result travel via the filesystem; the trigger carries only the short "go" signal and the paths. That split predates the socket — it was forced by tmux's 200-char trigger budget, which still binds codex workers — but it outlives it, because the socket carries no reply a shell script can collect. The result file is what makes the answer readable by `dispatch.sh`, and what keeps a late answer from an earlier attempt out of the current one's slot. SQLite stores every state transition with state-machine validation.
 
 ### 3. Worker asks the user (MCP)
 

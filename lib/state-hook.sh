@@ -56,6 +56,10 @@ event = payload.get("hook_event_name", "") if isinstance(payload, dict) else ""
 session_id = payload.get("session_id") or ""
 if not isinstance(session_id, str):
     session_id = ""
+# The session's cross-session messaging inbox socket. Claude Code exports it
+# to every hook before running it; recorded so senders (peer_post in _lib.sh)
+# can post messages straight into the session instead of typing into the pane.
+sock = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET") or ""
 
 # Claude Code fires Notification BOTH for permission prompts ("Claude needs
 # your permission to ...") and for a plain 60s-idle nudge ("Claude is waiting
@@ -75,17 +79,22 @@ os.makedirs(d, exist_ok=True)
 f = os.path.join(d, safe + ".json")
 tmp = f + ".tmp." + str(os.getpid())
 record = {"state": state, "detail": detail, "event": event, "ts_epoch": int(time.time())}
-if session_id:
-    record["session_id"] = session_id
-else:
-    # Keep the last known id — SessionEnd and some events may omit it, and
-    # losing it would defeat resume right when it matters (after a shutdown).
-    try:
-        prev = json.load(open(f))
-        if isinstance(prev, dict) and prev.get("session_id"):
-            record["session_id"] = prev["session_id"]
-    except Exception:
-        pass
+# Keep the last known value when an event omits one — SessionEnd and some
+# events drop session_id, and losing it would defeat resume right when it
+# matters (after a shutdown). The socket path gets the same treatment so a
+# late hook without the env var can't erase a working delivery address.
+prev = {}
+try:
+    prev = json.load(open(f))
+    if not isinstance(prev, dict):
+        prev = {}
+except Exception:
+    pass
+for key, val in (("session_id", session_id), ("messaging_socket", sock)):
+    if val:
+        record[key] = val
+    elif prev.get(key):
+        record[key] = prev[key]
 with open(tmp, "w") as fh:
     json.dump(record, fh)
 os.replace(tmp, f)  # atomic
