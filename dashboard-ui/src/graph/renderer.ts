@@ -350,7 +350,23 @@ export class GraphRenderer {
       this.cam.y = e.clientY - (e.clientY - this.cam.y) * (s2 / this.cam.s);
       this.cam.s = s2;
     }, { passive: false });
-    on<'contextmenu'>(this.cv, 'contextmenu', (e) => {
+    // Bound to `window` rather than the canvas: when a node is selected, the
+    // DetailPanel's full-viewport backdrop (z-index above the canvas, needed
+    // to catch outside-clicks that close the panel) sits over the canvas and
+    // becomes the event's target, so a canvas-only listener would never see
+    // right-clicks while a node is active. A window listener still fires
+    // regardless of which overlay the pointer actually hit; the bounds check
+    // below keeps clicks outside the canvas rect (HUD, panel) from opening it.
+    on<'contextmenu'>(window, 'contextmenu', (e) => {
+      const rect = this.cv.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
+      ) {
+        return;
+      }
       const hit = this.hitTest(e.clientX, e.clientY);
       // Only swallow the browser menu when there is something under the
       // cursor to offer instead — a right-click on empty canvas stays the
