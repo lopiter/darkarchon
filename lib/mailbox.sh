@@ -33,6 +33,7 @@
 #   @all           every registered worker
 #   @idle          every worker currently reporting idle
 #   @claude        every claude worker        @codex   every codex worker
+#   @grok          every grok worker
 #   @cwd:<dir>     every worker whose cwd is <dir>
 # The sender is never included in its own group send. Group names are explicit
 # ('@' prefixed) rather than matched against free text, so a worker named after
@@ -119,7 +120,7 @@ deliver_one() {
 # unknown address would be reported as an empty group instead of a typo.
 is_group_address() {
     case "$1" in
-        @all|@idle|@claude|@codex|@cwd:*) return 0 ;;
+        @all|@idle|@claude|@codex|@grok|@cwd:*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -130,7 +131,7 @@ expand_group() {
     local addr="$1" sender="$2" w
     case "$addr" in
         @all)    all_known_workers ;;
-        @claude|@codex)
+        @claude|@codex|@grok)
             for w in $(all_known_workers); do
                 [ "$(worker_kind "$w")" = "${addr#@}" ] && echo "$w"
             done ;;
@@ -167,7 +168,7 @@ case "$cmd" in
             @*)
                 if ! is_group_address "$to"; then
                     echo "ERROR: unknown group address '$to'" >&2
-                    echo "  known: @all @idle @claude @codex @cwd:<dir>" >&2
+                    echo "  known: @all @idle @claude @codex @grok @cwd:<dir>" >&2
                     exit 1
                 fi
                 recipients="$(expand_group "$to" "$from")"
@@ -264,7 +265,7 @@ case "$cmd" in
 
     *)
         echo "Usage: $0 {send <to> [--from <from>] <body>|read <worker>|peek <worker>|count <worker>|outstanding <worker> [--older-than <sec>]|renotify <worker>|clear <worker>}" >&2
-        echo "  <to> may be a worker name or a group: @all @idle @claude @codex @cwd:<dir>" >&2
+        echo "  <to> may be a worker name or a group: @all @idle @claude @codex @grok @cwd:<dir>" >&2
         exit 1
         ;;
 esac

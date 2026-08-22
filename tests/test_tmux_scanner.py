@@ -216,3 +216,32 @@ def test_scan_panes_window_name_marked_pane_shows_unknown_when_no_claude_marker(
     assert len(workers) == 1
     assert workers[0]["state"] == "unknown"
     assert workers[0]["window_name"] == "claude"
+
+
+def test_list_llm_panes_matches_truncated_grok_binary_name():
+    """grok's binary is `grok-macos-aarch64`; tmux truncates pane_current_command
+    to 15 chars, so the pane must be found by prefix, not by exact name."""
+    fake_output = (
+        "12345 1 1 1 @0 %0 grok-macos-aarc alpha:1.0 alpha-window /Users/u/repo1\n"
+        "12346 1 1 0 @1 %1 grokker         alpha:2.0 alpha-window /Users/u/repo2\n"
+    )
+    with patch("lib.tmux_scanner.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
+        panes = list_llm_panes(allowed_processes=("claude", "codex", "grok"))
+
+    assert [p.process for p in panes] == ["grok-macos-aarc"]
+
+
+def test_scan_panes_routes_grok_process_to_grok_detector():
+    """A native grok pane shares the ❯ composer with claude; the process name
+    must win so it is classified by the grok detector, not the claude one."""
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="grok-macos-aarc", target="g:0.0", cwd="/r", window_name="w")]
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", return_value="│ ❯ │\nShift+Tab:mode  │  Esc:cancel  │  Ctrl+.:shortcuts\n"):
+            with patch("lib.tmux_scanner.capture_pane_title", return_value="⠧ - Responding - grok"):
+                workers = scan_panes()
+
+    assert workers[0]["process"] == "grok"
+    assert workers[0]["state"] == "busy"

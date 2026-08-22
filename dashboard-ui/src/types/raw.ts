@@ -83,7 +83,7 @@ export interface RawWorker {
   /**
    * Claude Code cross-session messaging name from ~/.claude/sessions on the
    * worker's host (e.g. 'darkarchon-c3'). Any local Claude session can
-   * SendMessage to it. Absent for codex/gemini panes, dead sessions, and
+   * SendMessage to it. Absent for codex/gemini/grok panes, dead sessions, and
    * pre-messaging Claude builds.
    */
   peer_name?: string;

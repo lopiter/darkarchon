@@ -182,9 +182,13 @@ checked_dispatch() {
             echo "  Wait for it to finish, or if you're chatting with it directly, detach first." >&2
             return 10 ;;
         error)
-            echo "REFUSED: codex worker '$WORKER' ($TARGET) shows an auth/stream error." >&2
+            echo "REFUSED: $kind worker '$WORKER' ($TARGET) shows an auth/stream error." >&2
             [ -n "$detail" ] && echo "  detail: $detail" >&2
-            echo "  The codex token appears expired or not logged in. Run 'codex login' and try again." >&2
+            case "$kind" in
+                codex)  echo "  The codex token appears expired or not logged in. Run 'codex login' and try again." >&2 ;;
+                gemini) echo "  gemini is asking for an API key. Authenticate in the pane and try again." >&2 ;;
+                *)      echo "  The worker cannot progress until a human fixes it in the pane." >&2 ;;
+            esac
             return 12 ;;
         awaiting_permission)
             echo "REFUSED: worker '$WORKER' ($TARGET) is blocked on a permission prompt." >&2
@@ -244,8 +248,8 @@ checked_dispatch() {
         done < <(workers_sharing_dir "$SELF_DIR" "$WORKER")
     fi
 
-    # ─── --force pre-clear (claude only): wipe ghost text before the trigger ─
-    if [ "$FORCE" -eq 1 ] && [ "$kind" != "codex" ]; then
+    # ─── --force pre-clear (claude/gemini only): wipe ghost text before the trigger ─
+    if [ "$FORCE" -eq 1 ] && [ "$kind" != "codex" ] && [ "$kind" != "grok" ]; then
         tmux send-keys -t "=$TARGET" C-u C-k 2>/dev/null || true
         local bsp=""
         local i

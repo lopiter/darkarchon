@@ -48,7 +48,7 @@ class AgentConfig:
     hub_url: str
     host_id: str
     state_root: Path
-    llm_processes: tuple[str, ...] = ("claude", "codex")
+    llm_processes: tuple[str, ...] = ("claude", "codex", "grok")
     llm_window_names: tuple[str, ...] = ("claude",)
     interval_seconds: float = 5.0
     request_timeout: float = 3.0
@@ -178,7 +178,7 @@ def main():
     cfg_root = file_cfg.get("STATE_ROOT")
     state_root = args.state_root or (Path(cfg_root).expanduser() if cfg_root else DEFAULT_STATE_ROOT)
     interval = args.interval if args.interval else float(file_cfg.get("INTERVAL", "5"))
-    llm_processes = tuple((file_cfg.get("LLM_PROCESSES") or "claude,codex").split(","))
+    llm_processes = tuple((file_cfg.get("LLM_PROCESSES") or "claude,codex,grok").split(","))
     llm_window_names = tuple((file_cfg.get("LLM_WINDOWS") or "claude").split(","))
 
     cfg = AgentConfig(

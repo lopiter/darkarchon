@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib/_lib.sh"
 
-# Optional --kind overrides auto-detection (claude|codex). Default: auto-detect
+# Optional --kind overrides auto-detection (claude|codex|grok). Default: auto-detect
 # from pane content below.
 # --force skips the duplicate-target refusal (a pane already registered in any
 # team) for the rare case where dual membership is truly intended.
@@ -42,9 +42,9 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] [--force] <name> <session:window> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex|grok] [--force] <name> <session:window> [<role>]" >&2
     echo "  <name>            worker handle (sanitized; matches what dispatch.sh accepts)" >&2
-    echo "  <session:window>  tmux target of the existing Claude/codex pane" >&2
+    echo "  <session:window>  tmux target of the existing Claude/codex/grok pane" >&2
     echo "  <role>            free-form label (default: worker-invited)" >&2
     echo "  --kind            force agent flavor; omit to auto-detect from pane" >&2
     echo "  --force           allow a pane that is already registered in another team" >&2
@@ -54,8 +54,8 @@ NAME="$1"
 TARGET="$2"
 ROLE="${3:-worker-invited}"
 
-if [ -n "$KIND" ] && [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ]; then
-    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex)" >&2
+if [ -n "$KIND" ] && [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ] && [ "$KIND" != "grok" ]; then
+    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok)" >&2
     exit 1
 fi
 
@@ -141,9 +141,15 @@ fi
 # model names / banner — codex's "esc to interrupt" overlaps Claude's busy line,
 # so order matters), then codex markers. An explicit --kind skips detection.
 PANE="$(tmux capture-pane -p -t "$TARGET" -S -50 2>/dev/null || true)"
+PANE_PROC="$(tmux display-message -p -t "$TARGET" '#{pane_current_command}' 2>/dev/null || true)"
 DETECT_NOTE=""
 if [ -n "$KIND" ]; then
     DETECT_NOTE="forced via --kind"
+elif [[ "$PANE_PROC" == grok || "$PANE_PROC" == grok-* ]] || echo "$PANE" | grep -qE 'Grok Build|Ctrl\+\.:shortcuts'; then
+    # grok is a native binary ("grok-macos-aarch64", truncated by tmux), and its
+    # TUI shares the ❯ composer with Claude — so check it before the claude
+    # markers, which would otherwise swallow it.
+    KIND=grok; DETECT_NOTE="detected grok"
 elif echo "$PANE" | grep -qE 'Claude Code|bypass permissions on|Opus|Sonnet|Haiku'; then
     KIND=claude; DETECT_NOTE="detected claude"
 elif echo "$PANE" | grep -qE 'OpenAI Codex|⌃T transcript|⌃J newline|/approvals|Esc to interrupt'; then
@@ -201,7 +207,7 @@ echo "  kind:    $KIND ($DETECT_NOTE)"
 if [ "$DETECT_NOTE" = "unsure-default-claude" ]; then
     echo
     echo "  WARNING: couldn't detect the agent from pane content — defaulted to claude."
-    echo "  If this pane runs codex, re-invite with: $0 --kind codex '$NAME' '$TARGET'"
+    echo "  If this pane runs codex or grok, re-invite with: $0 --kind codex|grok '$NAME' '$TARGET'"
 fi
 echo
 echo "Dispatch:  $HERE/lib/dispatch.sh $NAME '<prompt>'"

@@ -585,3 +585,20 @@ def test_ended_session_still_wins_over_a_dialog_left_on_screen():
                       scrape={"state": "awaiting_permission", "detail": "x"},
                       is_dead=False)
     assert r["state"] == "dead"
+
+
+# ── resolve routes grok workers to the grok detector ─────────────────────────
+def test_resolve_grok_kind_uses_title_signal(tmp_path):
+    _write_registry(tmp_path, name="grk", kind="grok")
+
+    def cap(target, with_ansi=False):
+        return "│ ❯ │\nShift+Tab:mode  │  Ctrl+.:shortcuts\n"
+
+    r = ws.resolve(
+        "grk", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=cap,
+        title_fn=lambda t: "⠧ - Waiting for response… - grok",
+    )
+    assert r["state"] == "busy"
+    assert r["kind"] == "grok"

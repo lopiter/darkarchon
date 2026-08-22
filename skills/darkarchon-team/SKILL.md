@@ -47,7 +47,7 @@ roster, which is worse than an error.
 **Spawn** — darkarchon launches the agent:
 
 ```bash
-$DARKARCHON_HOME/lib/spawn-worker.sh [--kind claude|codex] [--env K=V] <name> <cwd> [<role>]
+$DARKARCHON_HOME/lib/spawn-worker.sh [--kind claude|codex|grok] [--env K=V] <name> <cwd> [<role>]
 ```
 
 Creates a tmux window named `<name>` in session `<team>` (auto-creating the
@@ -62,18 +62,21 @@ its own `DARKARCHON_TEAM` for the sub-team it manages.
 
 **Choosing the kind (spawn only — invite auto-detects):**
 
-1. User said which ("as codex", "a claude worker") → pass `--kind`.
-2. Otherwise check `command -v claude` / `command -v codex`:
+1. User said which ("as codex", "a claude worker", "grok으로") → pass `--kind`.
+2. Otherwise check `command -v claude` / `command -v codex` / `command -v grok`:
    - Only one installed → use it silently.
-   - Both installed → **ask on every spawn.** Workers are often deliberately
+   - Several installed → **ask on every spawn.** Workers are often deliberately
      mixed (a claude dev + a codex reviewer), so never remember one answer as a
      default for the next worker.
 3. codex needs `codex login` (or `OPENAI_API_KEY`) first, or every turn 401s.
+   grok needs a one-time interactive login (`~/.grok/auth.json`).
+4. codex and grok workers are task-executors only: no team contract, no
+   darkarchon MCP tools (`ask`, `mailbox_send`). Dispatch works the same.
 
 **Invite** — register a pane the user already has running:
 
 ```bash
-$DARKARCHON_HOME/invite-worker.sh [--kind claude|codex] <name> <session:window> [<role>]
+$DARKARCHON_HOME/invite-worker.sh [--kind claude|codex|grok] <name> <session:window> [<role>]
 ```
 
 Kind is auto-detected from pane content; pass `--kind` only to correct it. cwd
@@ -202,7 +205,7 @@ $DARKARCHON_HOME/lib/mailbox.sh clear <name>
 ```
 
 `<to>` is a worker name or a group: `@all`, `@idle`, `@claude`, `@codex`,
-`@cwd:<dir>`. The sender is never included in its own group send. Group
+`@grok`, `@cwd:<dir>`. The sender is never included in its own group send. Group
 addresses must be written literally with `@`. `outstanding` + `renotify` is the
 recovery path when a worker never picked a message up.
 

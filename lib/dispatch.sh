@@ -213,7 +213,13 @@ build_trigger
 # detection below sees the same transitions as a typed trigger. Codex workers
 # and claude sessions without a socket keep the send-keys path.
 send_trigger() {
-    if [ "$KIND" = "codex" ]; then
+    if [ "$KIND" = "grok" ]; then
+        # grok's composer takes a literal line + one Enter (live-verified 1.0.5).
+        # `-l` keeps tmux from reading words like "Enter" as key names.
+        tmux send-keys -t "=$TARGET" -l -- "$TRIGGER"
+        sleep 0.3
+        tmux send-keys -t "=$TARGET" Enter
+    elif [ "$KIND" = "codex" ]; then
         # codex needs literal mode: `-l` stops tmux interpreting words like "Enter"
         # as key names, `--` guards a message starting with `-`. codex's TUI also
         # occasionally swallows the first Enter, so we double-press; an empty second

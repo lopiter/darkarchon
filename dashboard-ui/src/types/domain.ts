@@ -26,7 +26,7 @@ export interface Worker {
   state: WorkerState;
   role: string;
   tmuxTarget: string;
-  /** Agent process type — 'claude' | 'codex' | other */
+  /** Agent process type — 'claude' | 'codex' | 'grok' | other */
   process: string;
   /**
    * Invited pane the team does not own. Shutdown treats these apart: the

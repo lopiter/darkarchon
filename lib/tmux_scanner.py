@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from lib.detectors.claude import classify_claude_state
 from lib.detectors.codex import classify_codex_state
+from lib.detectors.grok import classify_grok_state
 
 # Some LLM CLIs (notably Claude Code on macOS) appear in tmux's pane_current_command
 # not as their CLI name but as the underlying runtime's version string, e.g. "2.1.148"
@@ -20,6 +21,10 @@ _NODE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-\S+)?$")
 _CLAUDE_CANDIDATE_PROCS = {"claude", "node"}
 # codex is a native binary, so its pane_current_command is just "codex".
 _CODEX_CANDIDATE_PROCS = {"codex"}
+# grok is a native binary whose real name is "grok-macos-aarch64" / "grok-linux-x86_64";
+# tmux truncates pane_current_command to 15 chars ("grok-macos-aarc"), so match
+# by prefix. Plain "grok" covers a symlinked/renamed install.
+_GROK_PROC_PREFIX = "grok"
 # codex TUI substrings. Spans versions: 0.34 showed a footer
 # ("⏎ send  ⌃J newline  ⌃T transcript"); 0.135 dropped the footer and shows an
 # "OpenAI Codex (vX)" banner + "Working (Ns • esc to interrupt)" while busy.
@@ -41,6 +46,10 @@ def _looks_like_claude_candidate(process: str) -> bool:
 
 def _looks_like_codex_candidate(process: str) -> bool:
     return process in _CODEX_CANDIDATE_PROCS
+
+
+def _looks_like_grok_candidate(process: str) -> bool:
+    return process == _GROK_PROC_PREFIX or process.startswith(_GROK_PROC_PREFIX + "-")
 
 
 def _has_codex_marker(plain: str) -> bool:
@@ -102,7 +111,7 @@ def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
 
 
 def list_llm_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[PaneInfo]:
@@ -138,7 +147,11 @@ def list_llm_panes(
             continue
         (pid, attached, win_active, pane_active, window_id, pane_id,
          process, target, window_name, cwd) = parts
-        match_proc = process in allowed_processes or bool(_NODE_VERSION_RE.match(process))
+        match_proc = (
+            process in allowed_processes
+            or bool(_NODE_VERSION_RE.match(process))
+            or ("grok" in allowed_processes and _looks_like_grok_candidate(process))
+        )
         match_window = window_name in window_names
         match_known = any(
             k in known_kinds for k in _pane_window_keys(target, window_name, window_id)
@@ -195,7 +208,11 @@ def looks_like_agent_process(process: str) -> bool:
     counts. Over-reporting here is the safe direction — the one caller uses it
     to warn "something is still running in this pane, don't kill it".
     """
-    return _looks_like_claude_candidate(process) or _looks_like_codex_candidate(process)
+    return (
+        _looks_like_claude_candidate(process)
+        or _looks_like_codex_candidate(process)
+        or _looks_like_grok_candidate(process)
+    )
 
 
 def capture_pane(target: str, with_ansi: bool = False) -> str:
@@ -211,7 +228,7 @@ def capture_pane(target: str, with_ansi: bool = False) -> str:
 
 
 def scan_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[dict]:
@@ -262,13 +279,22 @@ def scan_panes(
         explicit = p.window_name in window_names
         claude_proc = _looks_like_claude_candidate(p.process)
         codex_proc = _looks_like_codex_candidate(p.process)
+        grok_proc = _looks_like_grok_candidate(p.process)
 
-        if registered_kind == "codex":
+        if registered_kind == "grok":
+            state = classify_grok_state(plain, ansi, capture_pane_title(p.target))
+            effective_process = "grok"
+        elif registered_kind == "codex":
             state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "codex"
         elif registered_kind == "claude":
             state = classify_claude_state(plain, ansi)
             effective_process = "claude"
+        elif grok_proc:
+            # Native grok binary — its TUI shares the ❯ composer and box-drawing
+            # glyphs with claude, so never fall through to marker matching.
+            state = classify_grok_state(plain, ansi, capture_pane_title(p.target))
+            effective_process = "grok"
         elif codex_proc:
             # Process is literally `codex` — trust it and use the codex detector.
             # (codex panes can briefly show none of the markers while booting;
