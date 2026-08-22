@@ -602,3 +602,11 @@ def test_resolve_grok_kind_uses_title_signal(tmp_path):
     )
     assert r["state"] == "busy"
     assert r["kind"] == "grok"
+
+
+def test_synthesize_question_dialog_overrides_busy_hook():
+    """grok's ask-user-question dialog fires no hook event, so the hook still
+    says busy while the screen shows the option list — the screen wins."""
+    r = ws.synthesize({"state": "busy", "detail": ""}, {"state": "awaiting_user", "detail": "option dialog"}, False)
+    assert r["state"] == "awaiting_user"
+    assert r["source"] == "scrape-overlay"

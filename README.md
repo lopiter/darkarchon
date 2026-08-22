@@ -146,8 +146,17 @@ $DARKARCHON_HOME/lib/spawn-worker.sh --kind grok reviewer ~/projects/backend rev
 ```
 
 Grok workers launch as a persistent `grok --always-approve` TUI (override via
-`GROK_FLAGS` / `GROK_MODEL` in `config.env`); like codex they receive the trigger
-by `send-keys` and carry no team contract or darkarchon MCP tools.
+`GROK_FLAGS` / `GROK_MODEL` in `config.env`). They get the same team contract as
+claude workers through `grok --rules`, plus `prompts/grok.md`, which swaps the
+`mcp__darkarchon__*` tools for `lib/ask.sh` / `lib/mailbox.sh` — the worker's
+identity rides on the `EE_*` env it inherits, so `ask` and peer messaging work
+without an MCP server. Lifecycle hooks come from one global file,
+`~/.grok/hooks/darkarchon.json` (grok has no per-launch hooks flag; the receiver
+`lib/grok-state-hook.sh` no-ops outside a worker's environment). One grok
+specific: Enter in a busy grok composer means "send now" and interrupts the
+turn, so `mailbox.sh` holds messages for a busy grok worker and the worker's
+`Stop` hook blocks the turn end with "you have N unread messages" until it
+drains — grok's own keep-working mechanism, no keystrokes.
 
 Codex workers launch as a persistent `codex --dangerously-bypass-approvals-and-sandbox`
 TUI (no `codex exec`). The dispatch contract is the same one-line trigger; the
@@ -194,7 +203,7 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
 - **team index** (`lib/team_index.py`) — discovers every team state dir on a host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Built by each agent for its own machine and reported upward, since a state dir is only visible to the host holding it. Shared by the agent, the hub, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
 - **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, `wait-worker.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex. The scrape layer is per-kind (`lib/detectors/{claude,codex,gemini,grok}.py`); every kind also reads the tmux pane title (`#{pane_title}`), which all of these CLIs publish state to and which survives both scrolling and a crowded screen (codex: braille spinner while working, "Action Required" while blocked; gemini: "✦ Working…" ↔ "◇ Ready"; grok: braille spinner ↔ "… - grok", with its ┃-guttered option dialogs read from the screen because a question dialog keeps the busy title; claude: braille spinner ↔ "✳"). Claude Code's title was static when this resolver was written and now animates, but its idle glyph covers a blocked worker too, so for claude the title only corroborates `busy` and the screen still decides idle vs. awaiting-permission vs. unsent. Claude's screen layer also raises a `shells_running` flag that stops a live `busy` hook from being mistaken for idle while a foreground shell runs. `dispatch-safe.sh` additionally debounces idle (`IDLE_CONFIRMS`, default 3 consecutive reads) before firing.
-- **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
+- **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Spawned grok workers get the equivalent through `lib/grok-state-hook.sh` (global `~/.grok/hooks/darkarchon.json`; `Stop`/`StopCancelled`/`StopFailure`/`Notification permission_prompt` mapped to the same states, and grok's `SessionStart` fires on the first prompt, not at launch). Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
 
 See [DESIGN.md](DESIGN.md) for the dashboard visual spec.
 

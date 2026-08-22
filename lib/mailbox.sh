@@ -93,6 +93,16 @@ notify() {
     [ -z "$target" ] && return 0
     [ "${#trigger}" -gt 199 ] && return 0
     tmux has-session -t "=${target%%:*}" 2>/dev/null || return 0
+    # A grok pane must never be typed into mid-turn: Enter there is "send now"
+    # and interrupts the running turn (live-verified 1.0.5). Leave the message
+    # queued instead — the worker's Stop hook (lib/grok-state-hook.sh) sees it
+    # outstanding when the turn ends and keeps the model working until it
+    # drains. `outstanding` + `renotify` remain the manual recovery path.
+    if [ "$(worker_kind "$to")" = "grok" ]; then
+        local st
+        st="$(python3 "$HERE/worker_state.py" "$to" --field state 2>/dev/null || true)"
+        [ "$st" != "idle" ] && return 0
+    fi
     # -l --: send the text literally, so a body-derived trigger could never be
     # read as key names. Enter goes separately, as a real key.
     tmux send-keys -t "=$target" -l -- "$trigger" 2>/dev/null || true

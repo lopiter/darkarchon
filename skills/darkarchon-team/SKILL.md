@@ -70,8 +70,11 @@ its own `DARKARCHON_TEAM` for the sub-team it manages.
      default for the next worker.
 3. codex needs `codex login` (or `OPENAI_API_KEY`) first, or every turn 401s.
    grok needs a one-time interactive login (`~/.grok/auth.json`).
-4. codex and grok workers are task-executors only: no team contract, no
-   darkarchon MCP tools (`ask`, `mailbox_send`). Dispatch works the same.
+4. codex workers are task-executors only: no team contract, no darkarchon
+   MCP tools (`ask`, `mailbox_send`). grok workers get the full contract via
+   `--rules` and use the shell equivalents (`lib/ask.sh`, `lib/mailbox.sh`);
+   a message sent to a busy grok worker is held until its turn ends (a Stop
+   hook then makes it drain) — never typed mid-turn, which would interrupt it.
 
 **Invite** — register a pane the user already has running:
 

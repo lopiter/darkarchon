@@ -176,6 +176,11 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
                 "source": "hook"}
     if s == "awaiting_permission":
         return {**scrape, "source": "scrape-overlay"}
+    if h == "busy" and s == "awaiting_user":
+        # grok's ask-user-question dialog: no hook event fires for it, so the
+        # hook still says busy while the screen shows the option list. The
+        # worker is waiting on a human, and busy would hide that.
+        return {**scrape, "source": "scrape-overlay"}
     if h == "busy" and s in ("idle", "unsent"):
         if scrape.get("shells_running"):
             return {
