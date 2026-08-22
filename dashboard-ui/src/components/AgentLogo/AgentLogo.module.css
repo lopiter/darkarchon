@@ -24,3 +24,9 @@
   color: var(--text-muted);
   background: rgba(148, 163, 184, 0.16);
 }
+
+/* Grok badge: cool blue-grey, distinct from the codex neutral */
+.grok {
+  color: #a5b4fc;
+  background: rgba(129, 140, 248, 0.16);
+}

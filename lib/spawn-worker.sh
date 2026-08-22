@@ -19,8 +19,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/_lib.sh"
 
 # Optional leading --kind flag selects the agent flavor (default claude). Codex
-# workers launch via start-worker-codex.sh and use codex-specific dispatch and
-# busy-detection paths downstream (resolved from WORKER_<sn>_KIND in the registry).
+# and grok workers launch via start-worker-{codex,grok}.sh and use kind-specific
+# dispatch and busy-detection paths downstream (resolved from WORKER_<sn>_KIND
+# in the registry).
 #
 # Optional --env KEY=VALUE (repeatable) prepends env assignments to the launcher
 # command line inside the new window, so the spawned agent process (and every
@@ -74,7 +75,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] [--spawned-by <name>] <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex|grok] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] [--spawned-by <name>] <name> <cwd> [<role>]" >&2
     exit 1
 fi
 
@@ -92,8 +93,8 @@ NAME="$1"
 CWD="$2"
 ROLE="${3:-worker}"
 
-if [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ]; then
-    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex)" >&2
+if [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ] && [ "$KIND" != "grok" ]; then
+    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok)" >&2
     exit 1
 fi
 
@@ -176,6 +177,14 @@ if [ "$KIND" = "codex" ]; then
         # Fallback to bare codex if wrapper missing (graceful degradation)
         tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}codex ${CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}" Enter
     fi
+elif [ "$KIND" = "grok" ]; then
+    LAUNCHER="$HERE/start-worker-grok.sh"
+    if [ -x "$LAUNCHER" ]; then
+        tmux send-keys -t "=$WIN_SESSION:$NAME" \
+            "${ENV_PREFIX}GROK_FLAGS='${GROK_FLAGS:-}' GROK_MODEL='${GROK_MODEL:-}' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR'" Enter
+    else
+        tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}grok ${GROK_FLAGS:---always-approve}" Enter
+    fi
 else
     LAUNCHER="$HERE/start-worker-claude.sh"
     if [ -x "$LAUNCHER" ]; then
@@ -241,6 +250,8 @@ echo "  kind:   $KIND"
 echo
 if [ "$KIND" = "codex" ]; then
     echo "Wait ~10s for codex to start. Ensure 'codex login' is done (else 401)."
+elif [ "$KIND" = "grok" ]; then
+    echo "Wait ~10s for grok to start. Ensure grok is logged in (~/.grok/auth.json)."
 else
     echo "Wait ~15s for Claude to start. If trust prompt appears, hit Enter once."
 fi

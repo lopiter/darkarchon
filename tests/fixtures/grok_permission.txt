@@ -1,0 +1,9 @@
+  ┃  ◆ Run rm -rf build
+  ┃
+  ┃  Allow this command?
+  ┃
+  ┃  1 (●) Yes, proceed
+  ┃  2 (○) Yes, and always allow rm in this session
+  ┃  3 (○) No, reject
+  ┃
+  1/3:select  │  Ctrl+o:yolo  │  Ctrl+c:cancel

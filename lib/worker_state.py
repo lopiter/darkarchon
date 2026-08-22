@@ -34,6 +34,7 @@ if str(_ROOT) not in sys.path:
 from lib.detectors.claude import classify_claude_state  # noqa: E402
 from lib.detectors.codex import classify_codex_state  # noqa: E402
 from lib.detectors.gemini import classify_gemini_state  # noqa: E402
+from lib.detectors.grok import classify_grok_state  # noqa: E402
 from lib.heartbeat import (  # noqa: E402
     HEARTBEAT_STALE_SEC,
     heartbeat_age_sec,
@@ -111,10 +112,10 @@ def _normalize_scrape_state(state: str) -> str:
 def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=capture_pane_title) -> dict:
     """Capture the pane and classify via the kind-appropriate detector.
 
-    Every kind reads the pane's OSC title (#{pane_title}) — all three publish
+    Every kind reads the pane's OSC title (#{pane_title}) — all of them publish
     state there (codex: braille spinner / "Action Required"; gemini:
-    "✦ Working…" / "◇ Ready"; claude: braille spinner / "✳"; live-verified
-    2026-08). Claude Code's title was static when this was first written and
+    "✦ Working…" / "◇ Ready"; grok: braille spinner / "… - grok"; claude:
+    braille spinner / "✳"; live-verified 2026-08). Claude Code's title was static when this was first written and
     now toggles, so the claude detector uses it as well — but only to
     corroborate busy, since its idle glyph also covers a blocked worker.
     """
@@ -126,6 +127,8 @@ def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=captu
         st = classify_codex_state(plain, ansi, title_fn(target))
     elif kind == "gemini":
         st = classify_gemini_state(plain, ansi, title_fn(target))
+    elif kind == "grok":
+        st = classify_grok_state(plain, ansi, title_fn(target))
     else:
         st = classify_claude_state(plain, ansi, title_fn(target))
     out = {"state": _normalize_scrape_state(st["state"]), "detail": st.get("detail", "")}
@@ -172,6 +175,11 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         return {"state": "dead", "detail": hook.get("detail", "") or "session ended",
                 "source": "hook"}
     if s == "awaiting_permission":
+        return {**scrape, "source": "scrape-overlay"}
+    if h == "busy" and s == "awaiting_user":
+        # grok's ask-user-question dialog: no hook event fires for it, so the
+        # hook still says busy while the screen shows the option list. The
+        # worker is waiting on a human, and busy would hide that.
         return {**scrape, "source": "scrape-overlay"}
     if h == "busy" and s in ("idle", "unsent"):
         if scrape.get("shells_running"):

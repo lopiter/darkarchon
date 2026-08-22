@@ -9,12 +9,13 @@
  * Neutral first-letter badges (no third-party logos / trademarks):
  *   - Claude: 'C'
  *   - Codex:  'X'
+ *   - Grok:   'G'
  */
 
 import styles from './AgentLogo.module.css';
 
 interface Props {
-  /** worker.process value — 'claude' | 'codex' | anything else */
+  /** worker.process value — 'claude' | 'codex' | 'grok' | anything else */
   process: string;
   size?: number;
   className?: string;
@@ -23,7 +24,7 @@ interface Props {
 export function AgentLogo({ process, size = 16, className }: Props) {
   const normalized = process?.toLowerCase().trim();
 
-  const badge = (kind: 'claude' | 'codex', letter: string, label: string) => (
+  const badge = (kind: 'claude' | 'codex' | 'grok', letter: string, label: string) => (
     <span
       className={`${styles.logo} ${styles[kind]} ${className ?? ''}`}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.64) }}
@@ -36,6 +37,7 @@ export function AgentLogo({ process, size = 16, className }: Props) {
 
   if (normalized === 'claude') return badge('claude', 'C', 'Claude');
   if (normalized === 'codex') return badge('codex', 'X', 'Codex');
+  if (normalized === 'grok') return badge('grok', 'G', 'Grok');
 
   return null;
 }

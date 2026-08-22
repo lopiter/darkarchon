@@ -33,6 +33,7 @@
 #   @all           every registered worker
 #   @idle          every worker currently reporting idle
 #   @claude        every claude worker        @codex   every codex worker
+#   @grok          every grok worker
 #   @cwd:<dir>     every worker whose cwd is <dir>
 # The sender is never included in its own group send. Group names are explicit
 # ('@' prefixed) rather than matched against free text, so a worker named after
@@ -92,6 +93,16 @@ notify() {
     [ -z "$target" ] && return 0
     [ "${#trigger}" -gt 199 ] && return 0
     tmux has-session -t "=${target%%:*}" 2>/dev/null || return 0
+    # A grok pane must never be typed into mid-turn: Enter there is "send now"
+    # and interrupts the running turn (live-verified 1.0.5). Leave the message
+    # queued instead — the worker's Stop hook (lib/grok-state-hook.sh) sees it
+    # outstanding when the turn ends and keeps the model working until it
+    # drains. `outstanding` + `renotify` remain the manual recovery path.
+    if [ "$(worker_kind "$to")" = "grok" ]; then
+        local st
+        st="$(python3 "$HERE/worker_state.py" "$to" --field state 2>/dev/null || true)"
+        [ "$st" != "idle" ] && return 0
+    fi
     # -l --: send the text literally, so a body-derived trigger could never be
     # read as key names. Enter goes separately, as a real key.
     tmux send-keys -t "=$target" -l -- "$trigger" 2>/dev/null || true
@@ -119,7 +130,7 @@ deliver_one() {
 # unknown address would be reported as an empty group instead of a typo.
 is_group_address() {
     case "$1" in
-        @all|@idle|@claude|@codex|@cwd:*) return 0 ;;
+        @all|@idle|@claude|@codex|@grok|@cwd:*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -130,7 +141,7 @@ expand_group() {
     local addr="$1" sender="$2" w
     case "$addr" in
         @all)    all_known_workers ;;
-        @claude|@codex)
+        @claude|@codex|@grok)
             for w in $(all_known_workers); do
                 [ "$(worker_kind "$w")" = "${addr#@}" ] && echo "$w"
             done ;;
@@ -167,7 +178,7 @@ case "$cmd" in
             @*)
                 if ! is_group_address "$to"; then
                     echo "ERROR: unknown group address '$to'" >&2
-                    echo "  known: @all @idle @claude @codex @cwd:<dir>" >&2
+                    echo "  known: @all @idle @claude @codex @grok @cwd:<dir>" >&2
                     exit 1
                 fi
                 recipients="$(expand_group "$to" "$from")"
@@ -264,7 +275,7 @@ case "$cmd" in
 
     *)
         echo "Usage: $0 {send <to> [--from <from>] <body>|read <worker>|peek <worker>|count <worker>|outstanding <worker> [--older-than <sec>]|renotify <worker>|clear <worker>}" >&2
-        echo "  <to> may be a worker name or a group: @all @idle @claude @codex @cwd:<dir>" >&2
+        echo "  <to> may be a worker name or a group: @all @idle @claude @codex @grok @cwd:<dir>" >&2
         exit 1
         ;;
 esac

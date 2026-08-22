@@ -1,6 +1,6 @@
 # darkarchon
 
-Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
+Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex) and xAI [Grok Build](https://x.ai) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex` / `grok`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
 > tmux window = isolated claude process · filesystem = message bus · short trigger over the worker's inbox socket (send-keys for codex)
 
@@ -140,6 +140,24 @@ $DARKARCHON_HOME/lib/spawn-worker.sh --kind codex reviewer ~/projects/backend re
 $DARKARCHON_HOME/dispatch-safe.sh reviewer 'review the latest changes'
 ```
 
+```bash
+# spawn a Grok worker (needs the `grok` CLI installed + logged in once)
+$DARKARCHON_HOME/lib/spawn-worker.sh --kind grok reviewer ~/projects/backend review
+```
+
+Grok workers launch as a persistent `grok --always-approve` TUI (override via
+`GROK_FLAGS` / `GROK_MODEL` in `config.env`). They get the same team contract as
+claude workers through `grok --rules`, plus `prompts/grok.md`, which swaps the
+`mcp__darkarchon__*` tools for `lib/ask.sh` / `lib/mailbox.sh` — the worker's
+identity rides on the `EE_*` env it inherits, so `ask` and peer messaging work
+without an MCP server. Lifecycle hooks come from one global file,
+`~/.grok/hooks/darkarchon.json` (grok has no per-launch hooks flag; the receiver
+`lib/grok-state-hook.sh` no-ops outside a worker's environment). One grok
+specific: Enter in a busy grok composer means "send now" and interrupts the
+turn, so `mailbox.sh` holds messages for a busy grok worker and the worker's
+`Stop` hook blocks the turn end with "you have N unread messages" until it
+drains — grok's own keep-working mechanism, no keystrokes.
+
 Codex workers launch as a persistent `codex --dangerously-bypass-approvals-and-sandbox`
 TUI (no `codex exec`). The dispatch contract is the same one-line trigger; the
 worker's kind is recorded in the registry so dispatch, busy-detection, and the
@@ -184,8 +202,8 @@ dashboard route to the right per-agent logic. Two notable differences from Claud
 - **worker-side MCP server** (`lib/mcp_server.py`) — child of the claude process. Exposes `ask`, `mailbox_send`, `mailbox_drain`, `status_get` as native tools. Same on-disk format as the legacy sh helpers — both paths interoperate.
 - **heartbeat writer** (`lib/heartbeat-writer.sh`) — another child of the claude process. Touches `heartbeats/<worker>.json` every 5s while alive; the agent marks the worker dead the moment the file goes stale or the pid disappears.
 - **team index** (`lib/team_index.py`) — discovers every team state dir on a host and ages each one from the traces its tooling already leaves (dispatch, heartbeat, registry, mailbox). Built by each agent for its own machine and reported upward, since a state dir is only visible to the host holding it. Shared by the agent, the hub, and `lib/teams.sh`, so "which teams exist and which are abandoned" has one answer regardless of who asks — and `lib/teams.sh` can answer it with no hub running.
-- **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, `wait-worker.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex. The scrape layer is per-kind (`lib/detectors/{claude,codex,gemini}.py`); every kind also reads the tmux pane title (`#{pane_title}`), which all three CLIs publish state to and which survives both scrolling and a crowded screen (codex: braille spinner while working, "Action Required" while blocked; gemini: "✦ Working…" ↔ "◇ Ready"; claude: braille spinner ↔ "✳"). Claude Code's title was static when this resolver was written and now animates, but its idle glyph covers a blocked worker too, so for claude the title only corroborates `busy` and the screen still decides idle vs. awaiting-permission vs. unsent. Claude's screen layer also raises a `shells_running` flag that stops a live `busy` hook from being mistaken for idle while a foreground shell runs. `dispatch-safe.sh` additionally debounces idle (`IDLE_CONFIRMS`, default 3 consecutive reads) before firing.
-- **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
+- **state resolver** (`lib/worker_state.py`) — the single source of truth for "what state is worker X in?", shared by `dispatch-safe.sh`, `check-worker-state.sh`, `wait-worker.sh`, and the dashboard agent. It layers three signals by reliability: heartbeat liveness (dead) > hook events > TUI scrape. No more drifting copies of busy/idle regex. The scrape layer is per-kind (`lib/detectors/{claude,codex,gemini,grok}.py`); every kind also reads the tmux pane title (`#{pane_title}`), which all of these CLIs publish state to and which survives both scrolling and a crowded screen (codex: braille spinner while working, "Action Required" while blocked; gemini: "✦ Working…" ↔ "◇ Ready"; grok: braille spinner ↔ "… - grok", with its ┃-guttered option dialogs read from the screen because a question dialog keeps the busy title; claude: braille spinner ↔ "✳"). Claude Code's title was static when this resolver was written and now animates, but its idle glyph covers a blocked worker too, so for claude the title only corroborates `busy` and the screen still decides idle vs. awaiting-permission vs. unsent. Claude's screen layer also raises a `shells_running` flag that stops a live `busy` hook from being mistaken for idle while a foreground shell runs. `dispatch-safe.sh` additionally debounces idle (`IDLE_CONFIRMS`, default 3 consecutive reads) before firing.
+- **state hook** (`lib/state-hook.sh`) — for spawned Claude workers, `start-worker-claude.sh` injects a per-worker hooks file via `claude --settings` (same out-of-repo pattern as the MCP config). Claude Code fires `UserPromptSubmit`/`Stop`/`Notification`/`PreCompact` and the hook records busy/idle/awaiting_user/compacting to `states/<worker>.json` — event-driven, so the resolver isn't guessing from screen scraping. Spawned grok workers get the equivalent through `lib/grok-state-hook.sh` (global `~/.grok/hooks/darkarchon.json`; `Stop`/`StopCancelled`/`StopFailure`/`Notification permission_prompt` mapped to the same states, and grok's `SessionStart` fires on the first prompt, not at launch). Invited/codex/legacy workers have no hook file and fall back to scraping, unchanged.
 
 See [DESIGN.md](DESIGN.md) for the dashboard visual spec.
 
@@ -357,8 +375,8 @@ tmux carries short triggers only; the filesystem is the message bus.
 
 | Script | Purpose |
 |---|---|
-| `lib/spawn-worker.sh [--kind claude\|codex] <name> <cwd> [role]` | Create a new tmux window and start a Claude or Codex worker in it (default claude) |
-| `invite-worker.sh [--kind claude\|codex] <name> <session:window> [role]` | Register an existing Claude/Codex pane as a worker (no respawn; kind auto-detected) |
+| `lib/spawn-worker.sh [--kind claude\|codex\|grok] <name> <cwd> [role]` | Create a new tmux window and start a Claude, Codex or Grok worker in it (default claude) |
+| `invite-worker.sh [--kind claude\|codex\|grok] <name> <session:window> [role]` | Register an existing Claude/Codex/Grok pane as a worker (no respawn; kind auto-detected) |
 | `uninvite-worker.sh <name>` | Remove an invited worker from the registry (pane untouched) |
 | `dispatch-safe.sh [--after <ids>] <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy; `--after` waits for other tasks first |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
@@ -385,7 +403,7 @@ tmux carries short triggers only; the filesystem is the message bus.
 | MCP tool | Legacy sh equivalent | Purpose |
 |---|---|---|
 | `mcp__darkarchon__ask(question, context, blocking=False)` | `lib/ask.sh [--blocking] "<q>"` | File a question for the orchestrator; `blocking` waits for the answer |
-| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@cwd:<dir>` |
+| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@grok`/`@cwd:<dir>` |
 | `mcp__darkarchon__mailbox_drain()` | `lib/mailbox.sh read <self>` | Read & remove own pending messages (stamps `read_at`) |
 | `mcp__darkarchon__status_get()` | (no equivalent) | Self-introspection (mailbox count, recent tasks) |
 
@@ -400,7 +418,7 @@ implementation.
 | `0` | Dispatched and completed — result on stdout |
 | `10` | Worker busy / compacting / rate-limited, or another dispatch is in flight |
 | `11` | Unsent user input on the prompt line (`--force` overrides) |
-| `12` | Codex auth/stream error — run `codex login` |
+| `12` | Worker shows an auth error (codex: run `codex login`; gemini: enter the API key) |
 | `13` | A same-cwd peer worker is busy (edits are serialized) |
 | `14` | Worker is blocked on a permission prompt or a question |
 | `15` | Circuit breaker: repeated failures on this worker (`--force` overrides) |

@@ -1,0 +1,12 @@
+     The command finished successfully.                                                                      2:52 AM
+     Output: hi
+     Exit code: 0
+     Worked for 13s                                                                                 stop  [hooks: 2]
+  Help improve Grok                                                                                 [Opt out] [Opt in]
+  Off by default. Opt-in to allow SpaceXAI to retain coding data, e.g., prompts, traces, & metrics,
+  for training and debugging purposes. Change anytime via settings.
+  Read Terms and Privacy Policy.
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────── Grok 4.6 (high) ─╯
+  Shift+Tab:mode  │  Ctrl+.:shortcuts

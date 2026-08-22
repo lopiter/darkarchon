@@ -91,7 +91,7 @@ def annotate_workers_with_peer_names(
     workers: list[dict], registry: dict[str, dict] | None = None
 ) -> list[dict]:
     """Stamp `peer_name` onto every scanned worker whose pane hosts a live
-    Claude Code session. Panes with no match (codex, gemini, dead sessions,
+    Claude Code session. Panes with no match (codex, gemini, grok, dead sessions,
     pre-messaging Claude builds) pass through untouched — the field is simply
     absent, and the UI offers no copy for it.
     """

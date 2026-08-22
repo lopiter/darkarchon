@@ -31,7 +31,7 @@ export function workerMenuItems(worker: Worker): MenuItem[] {
       label: 'Copy session name',
       // The Claude cross-session messaging address — paste it into any local
       // Claude session ("<name>에게 메시지 보내줘") to reach this worker
-      // directly. Absent for codex/gemini panes and pre-messaging builds.
+      // directly. Absent for codex/gemini/grok panes and pre-messaging builds.
       hint: worker.peerName ?? 'no messaging session in this pane',
       disabled: !worker.peerName,
       copy: worker.peerName ?? '',
