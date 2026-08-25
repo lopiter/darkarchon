@@ -12,6 +12,7 @@
  *   - Grok:   'G'
  */
 
+import { agentIdentity } from '../../utils/agentProcess';
 import styles from './AgentLogo.module.css';
 
 interface Props {
@@ -22,22 +23,17 @@ interface Props {
 }
 
 export function AgentLogo({ process, size = 16, className }: Props) {
-  const normalized = process?.toLowerCase().trim();
+  const ident = agentIdentity(process);
+  if (!ident) return null;
 
-  const badge = (kind: 'claude' | 'codex' | 'grok', letter: string, label: string) => (
+  return (
     <span
-      className={`${styles.logo} ${styles[kind]} ${className ?? ''}`}
+      className={`${styles.logo} ${styles[ident.kind]} ${className ?? ''}`}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.64) }}
-      title={label}
-      aria-label={`${label} agent`}
+      title={ident.label}
+      aria-label={`${ident.label} agent`}
     >
-      {letter}
+      {ident.letter}
     </span>
   );
-
-  if (normalized === 'claude') return badge('claude', 'C', 'Claude');
-  if (normalized === 'codex') return badge('codex', 'X', 'Codex');
-  if (normalized === 'grok') return badge('grok', 'G', 'Grok');
-
-  return null;
 }
