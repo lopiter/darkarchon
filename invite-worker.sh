@@ -190,10 +190,15 @@ _persist_invite_registration() {
     } >> "$STATE_DIR/workers-runtime.env"
 
     if [ -n "${TMUX_PANE:-}" ]; then
-        local _orch
+        local _orch _orch_wid
         _orch="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)"
+        _orch_wid="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null || true)"
         if [ -n "$_orch" ]; then
-            printf '%s\n' "$_orch" > "$STATE_DIR/orchestrator.txt"
+            if [ -n "$_orch_wid" ]; then
+                printf '%s %s\n' "$_orch" "$_orch_wid" > "$STATE_DIR/orchestrator.txt"
+            else
+                printf '%s\n' "$_orch" > "$STATE_DIR/orchestrator.txt"
+            fi
         fi
     fi
 }

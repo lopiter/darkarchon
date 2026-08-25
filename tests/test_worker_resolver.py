@@ -23,6 +23,22 @@ def test_parse_registry_extracts_spawned_by_defaulting_to_empty():
     assert reg["t:w2"]["spawned_by"] == ""
 
 
+def test_parse_registry_extracts_session_defaulting_to_empty():
+    """Dedicated host session (spawn --session) is a display-grouping signal.
+    A worker registered in the fleet dir but living in its own tmux session
+    must carry that session so the hub can group it there, not in the fleet."""
+    text = (
+        "WORKER_voc_1_NAME=voc-1\n"
+        "WORKER_voc_1_TARGET=voc-1:voc-1\n"
+        "WORKER_voc_1_SESSION=voc-1\n"
+        "WORKER_staff_NAME=website-ui\n"
+        "WORKER_staff_TARGET=3hour:website-ui\n"  # no SESSION
+    )
+    reg = parse_registry_text(text)
+    assert reg["voc-1:voc-1"]["session"] == "voc-1"
+    assert reg["3hour:website-ui"]["session"] == ""
+
+
 def test_resolve_workers_carries_spawned_by_through():
     scanned = [
         {"target": "t:w1.0", "process": "claude", "cwd": "/x", "pane_pid": "1", "state": "idle"},
@@ -34,6 +50,22 @@ def test_resolve_workers_carries_spawned_by_through():
     resolved = resolve_workers(scanned, registry)
     assert resolved[0]["spawned_by"] == "hermes"
     assert resolved[1]["spawned_by"] == ""  # discovered pane — no lineage
+
+
+def test_resolve_workers_carries_session_through():
+    scanned = [
+        {"target": "voc-1:voc-1.0", "process": "claude", "cwd": "/x", "pane_pid": "1", "state": "idle"},
+        {"target": "t:zzz.0", "process": "claude", "cwd": "/y", "pane_pid": "2", "state": "idle"},
+    ]
+    registry = parse_registry_text(
+        "WORKER_voc_1_NAME=voc-1\n"
+        "WORKER_voc_1_TARGET=voc-1:voc-1\n"
+        "WORKER_voc_1_SESSION=voc-1\n"
+        "WORKER_voc_1_ROLE=orchestrator\n"
+    )
+    resolved = resolve_workers(scanned, registry)
+    assert resolved[0]["session"] == "voc-1"
+    assert resolved[1]["session"] == ""  # discovered pane
 
 
 def test_parse_registry_file_tolerates_non_utf8_bytes(tmp_path):

@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 _REGISTRY_LINE = re.compile(
-    r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL|KIND|SPAWNED_BY|WINDOW_ID)=(.*)$", re.M
+    r"^WORKER_(\w+)_(NAME|TARGET|DIR|ROLE|EXTERNAL|KIND|SPAWNED_BY|WINDOW_ID|SESSION)=(.*)$", re.M
 )
 
 
@@ -43,6 +43,12 @@ def parse_registry_text(text: str) -> dict:
             # Worker name of whoever spawned this one (lineage). Absent for
             # legacy entries, invited panes, and human-spawned workers.
             "spawned_by": info.get("SPAWNED_BY", ""),
+            # Dedicated tmux session (spawn --session). Empty when the window
+            # lives in the team's own session. The hub uses a non-empty value
+            # as display grouping so a fleet-registered orchestrator is not
+            # drawn inside the fleet just because that is where its registry
+            # row lives.
+            "session": info.get("SESSION", ""),
             # Kept so a window-id match can be checked against the session it
             # was registered in (see `_window_id_match`).
             "target": target,
@@ -170,6 +176,7 @@ def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
                     "external": meta.get("external", False),
                     "kind": "registered",
                     "spawned_by": meta.get("spawned_by", ""),
+                    "session": meta.get("session", ""),
                     # Which team registered this worker — the only directory
                     # whose heartbeat/hook files describe THIS pane.
                     "state_dir": meta.get("state_dir", ""),
@@ -184,6 +191,7 @@ def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
                     "external": False,
                     "kind": "discovered",
                     "spawned_by": "",
+                    "session": "",
                 }
             )
     return out

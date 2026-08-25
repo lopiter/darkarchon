@@ -24,6 +24,7 @@ from lib.hub_store import HostStateStore  # noqa: E402
 from lib.sse import SseBroker  # noqa: E402
 from lib.task_store import TaskStore  # noqa: E402
 from lib.team_index import classify, discover_teams, iso_to_epoch  # noqa: E402
+from lib.worker_resolver import parse_registry_file  # noqa: E402
 
 # Cache TaskStore instances by db path — sqlite connections are short-lived
 # per query but the schema-init is idempotent, so reusing the wrapper avoids
@@ -421,13 +422,50 @@ def _registered_teams_by_target() -> dict:
     return result
 
 
-def _registered_team_for_worker(worker: dict, teams_by_target: dict) -> str | None:
-    """Team for a scanned worker, matched by tmux TARGET (not name).
+def _registered_sessions_by_target() -> dict:
+    """{registry TARGET or WINDOW_ID -> dedicated SESSION} across team dirs.
 
-    The registry stores `session:window-name`; a scanned pane reports
-    `session:window-index.pane-index`. Try both shapes (and the worker's
-    window_name) so an invited/spawned worker resolves to the team whose
-    registry lists its target — and a same-name entry elsewhere does not."""
+    spawn-worker.sh --session writes WORKER_*_SESSION while leaving the
+    registry row in the caller's team. The hub uses this to display-group
+    that worker under the dedicated session instead of the fleet dir.
+    """
+    result: dict[str, str] = {}
+    for state_dir, _team_name in _all_state_dirs():
+        for meta in parse_registry_file(state_dir / "workers-runtime.env").values():
+            sess = meta.get("session") or ""
+            if not sess:
+                continue
+            target = meta.get("target") or ""
+            if target:
+                result[target] = sess
+            window_id = meta.get("window_id") or ""
+            if window_id:
+                result[window_id] = sess
+    return result
+
+
+def _apply_display_grouping(worker: dict) -> None:
+    """Expression-layer overlay on team_name / is_orchestrator.
+
+    A dedicated SESSION that differs from the assigned team pulls the card
+    out of the fleet group. role=orchestrator marks the card as the team's
+    parent in the graph. spawned_by is never rewritten — lineage stays.
+    """
+    dedicated = (worker.get("session") or "").strip()
+    if dedicated and dedicated != worker.get("team_name"):
+        worker["team_name"] = dedicated
+    if worker.get("role") == "orchestrator":
+        worker["is_orchestrator"] = True
+
+
+def _lookup_by_target(worker: dict, by_target: dict) -> str | None:
+    """Look up a registry map keyed by tmux TARGET / WINDOW_ID.
+
+    Used for both team_name (value = team) and dedicated SESSION (value =
+    session). The registry stores `session:window-name`; a scanned pane
+    reports `session:window-index.pane-index`. Try both shapes (and the
+    worker's window_name) so a renamed window still resolves, and a
+    same-NAME entry in another team does not."""
     target = worker.get("target", "")
     if not target:
         return None
@@ -441,12 +479,80 @@ def _registered_team_for_worker(worker: dict, teams_by_target: dict) -> str | No
     if window_name and session:
         candidates.append(f"{session}:{window_name}")
     for c in candidates:
-        if c in teams_by_target:
-            return teams_by_target[c]
+        if c in by_target:
+            return by_target[c]
     return None
 
 
-def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
+def _parse_orch_marker(line: str) -> tuple[str, str]:
+    """Split one orchestrator.txt line into (pane_key, window_id).
+
+    Legacy: `session:win.pane`. New: `session:win.pane @14` (window_id
+    from tmux, always starts with @). One line either way.
+    """
+    raw = (line or "").strip()
+    if not raw:
+        return "", ""
+    pane, sep, tail = raw.rpartition(" ")
+    if sep and tail.startswith("@") and pane:
+        return pane.strip(), tail
+    return raw, ""
+
+
+def _orchestrator_marker_panes(
+    state_dirs: list | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Explicit orchestrator.txt markers.
+
+    Returns (by_pane, by_window_id), each {key: team_name}. Window id is
+    preferred for the badge — pane indices get reused after a respawn.
+    """
+    by_pane: dict[str, str] = {}
+    by_window_id: dict[str, str] = {}
+    for state_dir, team_name in (state_dirs if state_dirs is not None else _all_state_dirs()):
+        marker = state_dir / "orchestrator.txt"
+        if not marker.exists():
+            continue
+        try:
+            text = marker.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            text = ""
+        if not text:
+            continue
+        # First non-empty line only — the file is still a single marker.
+        line = next((ln for ln in text.splitlines() if ln.strip()), "")
+        pane, window_id = _parse_orch_marker(line)
+        # Window id replaces the pane key — never both. Pane indices are
+        # reused after a respawn; keeping the old key would still badge
+        # whoever sits at sess:1.1.
+        if window_id:
+            by_window_id[window_id] = team_name
+        elif pane:
+            by_pane[pane] = team_name
+    return by_pane, by_window_id
+
+
+def _marker_is_staff(w: dict) -> bool:
+    """Secondary guard for *legacy* pane-key markers only.
+
+    Primary defense is window_id: a new-format marker never registers
+    its pane key, so a reused index cannot match. This still blocks
+    staff (website-ui) when an old `sess:1.1` line is the only signal.
+    External invited panes and role=orchestrator keep the badge.
+    """
+    if w.get("kind") != "registered":
+        return False
+    if w.get("external"):
+        return False
+    role = (w.get("role") or "").strip()
+    return bool(role) and role != "orchestrator"
+
+
+def _orchestrator_team_index(
+    registered_by_team: dict | None = None,
+    state_dirs: list | None = None,
+    from_marker: dict[str, str] | None = None,
+) -> dict:
     """Scan task history across all team dirs and tag dispatching panes.
 
     Returns: {sender_session_window: team_name}
@@ -458,27 +564,19 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
 
     Two signals feed this, and they are kept apart so the result doesn't depend
     on directory iteration order: `orchestrator.txt` is an explicit marker the
-    spawner wrote, dispatch history is inferred, and explicit wins.
+    spawner wrote, dispatch history is inferred, and explicit wins (merged
+    last). Callers that need the badge without moving team_name should read
+    `_orchestrator_marker_panes` separately — this merged dict is for grouping.
     """
     if registered_by_team is None:
         registered_by_team = _registered_workers_by_team()
-    from_marker: dict[str, str] = {}
     from_dispatch: dict[str, str] = {}
-    state_dirs = _all_state_dirs()
+    if state_dirs is None:
+        state_dirs = _all_state_dirs()
     known_teams = _team_names(state_dirs)
+    if from_marker is None:
+        from_marker, _by_wid = _orchestrator_marker_panes(state_dirs)
     for state_dir, team_name in state_dirs:
-        # Explicit marker: spawn-worker.sh / invite-worker.sh record the
-        # caller pane here. Lets us identify the orchestrator without
-        # needing any historical dispatch.
-        marker = state_dir / "orchestrator.txt"
-        if marker.exists():
-            try:
-                pane = marker.read_text().strip()
-            except Exception:
-                pane = ""
-            if pane:
-                from_marker[pane] = team_name
-
         db_path = state_dir / "tasks.db"
         if not db_path.exists():
             continue
@@ -509,6 +607,79 @@ def _orchestrator_team_index(registered_by_team: dict | None = None) -> dict:
             # that moved on to another team is tagged by where it works now.
             from_dispatch.setdefault(sender, team_sn)
     return {**from_dispatch, **from_marker}
+
+
+def _collect_status() -> dict:
+    """Assemble GET /api/status. Module-level so tests can drive the same
+    path Handler._status uses without spinning an HTTP server."""
+    workers = STORE.get_all_workers()
+    dispatches = _active_dispatches_index()
+    registered_by_team = _registered_workers_by_team()
+    registered_by_target = _registered_teams_by_target()
+    sessions_by_target = _registered_sessions_by_target()
+    state_dirs = _all_state_dirs()
+    marker_by_pane, marker_by_wid = _orchestrator_marker_panes(state_dirs)
+    orchestrator_team = _orchestrator_team_index(
+        registered_by_team, state_dirs, from_marker=marker_by_pane
+    )
+    # Explicit orchestrator.txt — badge only. Must not feed team_name
+    # (a pane can invite into several teams; grouping stays session-first).
+    mailbox_idx = _mailbox_index()
+    for w in workers:
+        w["pending_mailbox"] = mailbox_idx.get(w["name"])
+        w["recent_tasks"] = list_recent_tasks(w["name"])
+        w["last_activity_age"] = humanize_age(last_activity(w["name"]))
+        sender_key = _worker_session_window(w.get("target", ""))
+        incoming = dispatches["by_recipient"].get(w["name"], [])
+        outgoing = dispatches["by_sender"].get(sender_key, []) if sender_key else []
+        w["incoming_dispatches"] = incoming
+        w["outgoing_dispatches"] = outgoing
+
+        default_team = sender_key.split(":", 1)[0] if sender_key else ""
+        forced_team = orchestrator_team.get(sender_key) if sender_key else None
+        hub_team_by_session = _team_for_session(default_team)
+        registered_team = _lookup_by_target(w, registered_by_target)
+        # team_name priority unchanged: session known-team wins over the
+        # marker, so a pane that invited into team X but lives in session Y
+        # stays grouped under Y.
+        if hub_team_by_session:
+            w["team_name"] = hub_team_by_session
+            w["is_orchestrator"] = False
+        elif forced_team:
+            w["team_name"] = forced_team
+            w["is_orchestrator"] = True
+        elif registered_team and w.get("kind") == "registered":
+            w["team_name"] = registered_team
+            w["is_orchestrator"] = False
+        else:
+            w["team_name"] = default_team
+            w["is_orchestrator"] = False
+        # Explicit marker is the orch badge even when the session heuristic
+        # nailed is_orchestrator=False above. New markers match window id
+        # only; pane-key fallback is legacy lines without an id. Staff
+        # guard is a backstop for those legacy lines.
+        marked = False
+        wid = (w.get("window_id") or "").strip()
+        if wid and wid in marker_by_wid:
+            marked = True
+        elif sender_key and sender_key in marker_by_pane:
+            marked = True
+        if marked and not _marker_is_staff(w):
+            w["is_orchestrator"] = True
+        if not (w.get("session") or "").strip():
+            found = _lookup_by_target(w, sessions_by_target)
+            if found:
+                w["session"] = found
+        _apply_display_grouping(w)
+    workers.sort(key=lambda w: (w.get("external", False), w.get("host", ""), w.get("name", "")))
+    return {
+        "session_name": SESSION_NAME,
+        "state_dir": str(STATE_DIR),
+        "hosts": STORE.get_hosts(),
+        "workers": workers,
+        "teams": _teams_payload(_live_team_keys(workers)),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _worker_session_window(target: str) -> str:
@@ -636,69 +807,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(200, "application/json; charset=utf-8", json.dumps(obj).encode())
 
     def _status(self):
-        workers = STORE.get_all_workers()
-        dispatches = _active_dispatches_index()
-        registered_by_team = _registered_workers_by_team()
-        registered_by_target = _registered_teams_by_target()
-        orchestrator_team = _orchestrator_team_index(registered_by_team)
-        mailbox_idx = _mailbox_index()
-        for w in workers:
-            w["pending_mailbox"] = mailbox_idx.get(w["name"])
-            w["recent_tasks"] = list_recent_tasks(w["name"])
-            w["last_activity_age"] = humanize_age(last_activity(w["name"]))
-            # recent_output is now pushed by each host's agent (via
-            # scan_panes) and stored verbatim by HostStateStore. The hub
-            # used to call capture_pane locally as a fallback — dropped
-            # since cross-host workers couldn't be reached that way.
-            sender_key = _worker_session_window(w.get("target", ""))
-            incoming = dispatches["by_recipient"].get(w["name"], [])
-            outgoing = dispatches["by_sender"].get(sender_key, []) if sender_key else []
-            w["incoming_dispatches"] = incoming
-            w["outgoing_dispatches"] = outgoing
-
-            # Team membership precedence:
-            #   1. registered worker (workers-runtime.env) — always this hub's team,
-            #      regardless of which tmux session the pane happens to live in. This
-            #      covers invited EXTERNAL workers (e.g. user-owned pane in another
-            #      session) added via invite-worker.sh.
-            #   2. orchestrator — pane has historically dispatched into another team's
-            #      session. Pulled into that team.
-            #   3. default — worker's own session name.
-            default_team = sender_key.split(":", 1)[0] if sender_key else ""
-            forced_team = orchestrator_team.get(sender_key) if sender_key else None
-            # Priority order for team_name:
-            #   1. tmux session matches a known team (default /
-            #      default-sub_a etc) — most reliable, handles same-name
-            #      workers spawned in multiple worktrees.
-            #   2. orchestrator pane that dispatched into a known team.
-            #   3. registered worker whose session is none of ours (invited
-            #      EXTERNAL like writer at docu:1) — fall back to registry.
-            #      Matched by TARGET, so a stale/foreign same-NAME entry can't
-            #      hijack the team (see _registered_team_for_worker).
-            #   4. default: own session.
-            hub_team_by_session = _team_for_session(default_team)
-            registered_team = _registered_team_for_worker(w, registered_by_target)
-            if hub_team_by_session:
-                w["team_name"] = hub_team_by_session
-                w["is_orchestrator"] = False
-            elif forced_team:
-                w["team_name"] = forced_team
-                w["is_orchestrator"] = True
-            elif registered_team and w.get("kind") == "registered":
-                w["team_name"] = registered_team
-                w["is_orchestrator"] = False
-            else:
-                w["team_name"] = default_team
-                w["is_orchestrator"] = False
-        workers.sort(key=lambda w: (w.get("external", False), w.get("host", ""), w.get("name", "")))
-        return {
-            "session_name": SESSION_NAME,
-            "state_dir": str(STATE_DIR),
-            "hosts": STORE.get_hosts(),
-            "workers": workers,
-            "teams": _teams_payload(_live_team_keys(workers)),
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }
+        return _collect_status()
 
     def _task(self, tid):
         row = _task_store().get(tid)

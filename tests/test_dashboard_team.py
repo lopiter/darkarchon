@@ -3,8 +3,10 @@ stale leftover entry) must not hijack the team. Resolution is by tmux TARGET."""
 
 import pytest
 
+from lib.hub_store import HostStateStore
+
 import dashboard
-from dashboard import _all_state_dirs, _registered_team_for_worker
+from dashboard import _all_state_dirs, _lookup_by_target
 
 
 def test_target_match_beats_stale_same_name_entry():
@@ -20,23 +22,23 @@ def test_target_match_beats_stale_same_name_entry():
         "target": "live-team:2.1",
         "window_name": "homepage-backend",
     }
-    assert _registered_team_for_worker(worker, teams_by_target) == "live-team"
+    assert _lookup_by_target(worker, teams_by_target) == "live-team"
 
 
 def test_direct_window_index_target_match():
     teams_by_target = {"teamA:1": "teamA"}
     worker = {"target": "teamA:1.0", "window_name": "whatever"}
-    assert _registered_team_for_worker(worker, teams_by_target) == "teamA"
+    assert _lookup_by_target(worker, teams_by_target) == "teamA"
 
 
 def test_no_match_returns_none():
     teams_by_target = {"teamA:dev": "teamA"}
     worker = {"target": "teamB:2.1", "window_name": "reviewer"}
-    assert _registered_team_for_worker(worker, teams_by_target) is None
+    assert _lookup_by_target(worker, teams_by_target) is None
 
 
 def test_empty_target_returns_none():
-    assert _registered_team_for_worker({"target": ""}, {"x:y": "t"}) is None
+    assert _lookup_by_target({"target": ""}, {"x:y": "t"}) is None
 
 
 @pytest.fixture
@@ -147,3 +149,359 @@ def test_same_team_name_on_two_hosts_stays_separate():
     ]
 
     assert dashboard._live_team_keys(workers) == {("alpha", "voc")}
+
+
+def test_dedicated_session_moves_empty_orchestrator_out_of_fleet():
+    """Hermes registers voc-1 in the fleet dir (3hour-team) but gives it a
+    dedicated tmux session. Display grouping follows the session, not the
+    fleet registry — otherwise empty orchestrators pile up in the fleet."""
+    w = {
+        "team_name": "3hour-team",
+        "session": "voc-1",
+        "role": "orchestrator",
+        "is_orchestrator": False,
+        "spawned_by": "3hour-team",
+    }
+    dashboard._apply_display_grouping(w)
+    assert w["team_name"] == "voc-1"
+    assert w["is_orchestrator"] is True
+    assert w["spawned_by"] == "3hour-team"  # lineage must not be rewritten
+
+
+def test_staff_without_session_stay_in_their_assigned_team():
+    """3hour's website-ui lives in session 3hour and has no SESSION override.
+    Overlay must not yank it into another group."""
+    w = {
+        "team_name": "3hour",
+        "session": "",
+        "role": "website-ui",
+        "is_orchestrator": False,
+        "spawned_by": "3hour",
+    }
+    dashboard._apply_display_grouping(w)
+    assert w["team_name"] == "3hour"
+    assert w["is_orchestrator"] is False
+    assert w["spawned_by"] == "3hour"
+
+
+def test_orchestrator_matching_session_keeps_team_name_role_sets_orch():
+    """3hour employee: SESSION=3hour already equals the assigned team.
+    Team name stays; role=orchestrator still raises the ORCH flag."""
+    w = {
+        "team_name": "3hour",
+        "session": "3hour",
+        "role": "orchestrator",
+        "is_orchestrator": False,
+        "spawned_by": "3hour-team",
+    }
+    dashboard._apply_display_grouping(w)
+    assert w["team_name"] == "3hour"
+    assert w["is_orchestrator"] is True
+
+
+def test_vx_backend_groups_by_session_not_a_plugin_label():
+    """employee-groups.json says vx-backend → 'vx'. Using that label would
+    split the employee from its sub-team (DARKARCHON_TEAM=vx-backend).
+    Display grouping uses the dedicated session, never the plugin label."""
+    w = {
+        "team_name": "3hour-team",
+        "session": "vx-backend",
+        "role": "orchestrator",
+        "is_orchestrator": False,
+        "spawned_by": "3hour-team",
+    }
+    dashboard._apply_display_grouping(w)
+    assert w["team_name"] == "vx-backend"
+    assert w["team_name"] != "vx"
+
+
+def test_missing_session_key_is_a_no_op_on_team():
+    w = {"team_name": "3hour-team", "role": "worker", "is_orchestrator": False}
+    dashboard._apply_display_grouping(w)
+    assert w["team_name"] == "3hour-team"
+
+
+def test_registry_session_lookup_by_target(hub_at):
+    """Hub fallback: SESSION is read from the fleet registry so display
+    grouping works even when the agent payload omitted the field."""
+    root = hub_at("3hour-team")
+    fleet = root / "3hour-team"
+    fleet.mkdir()
+    (fleet / "workers-runtime.env").write_text(
+        "WORKER_voc_1_NAME=voc-1\n"
+        "WORKER_voc_1_TARGET=voc-1:voc-1\n"
+        "WORKER_voc_1_SESSION=voc-1\n"
+        "WORKER_voc_1_WINDOW_ID=@7\n"
+        "WORKER_staff_NAME=website-ui\n"
+        "WORKER_staff_TARGET=3hour:website-ui\n"
+    )
+    sessions = dashboard._registered_sessions_by_target()
+    assert sessions["voc-1:voc-1"] == "voc-1"
+    assert sessions["@7"] == "voc-1"
+    assert "3hour:website-ui" not in sessions
+
+
+def test_forced_orchestrator_flag_kept_when_role_is_not_orchestrator():
+    """A pane tagged is_orchestrator via dispatch history stays tagged even
+    if its role is not the string 'orchestrator'."""
+    w = {
+        "team_name": "other",
+        "session": "",
+        "role": "worker",
+        "is_orchestrator": True,
+    }
+    dashboard._apply_display_grouping(w)
+    assert w["is_orchestrator"] is True
+
+
+def _pane(target, name, **extra):
+    w = {
+        "target": target,
+        "name": name,
+        "state": "idle",
+        "process": "claude",
+        "cwd": "/",
+        "kind": extra.pop("kind", "registered"),
+        "role": extra.pop("role", "worker"),
+        "window_name": extra.pop("window_name", name),
+        "window_id": extra.pop("window_id", ""),
+        "session": extra.pop("session", ""),
+        "external": extra.pop("external", False),
+    }
+    w.update(extra)
+    return w
+
+
+def _status_workers(hub_at, monkeypatch, *, own="mine", teams=(), markers=None,
+                    registries=None, workers=None):
+    """Drive Handler._status's collector against a throwaway state root.
+
+    `markers` is {team_name: pane_key} written to orchestrator.txt.
+    `registries` is {team_name: workers-runtime.env text} overlaying _make_team.
+    """
+    root = hub_at(own)
+    for t in teams:
+        _make_team(root, t)
+    own_dir = root / own
+    own_dir.mkdir(exist_ok=True)
+    if not (own_dir / "workers-runtime.env").exists():
+        (own_dir / "workers-runtime.env").write_text("WORKER_x_TARGET=x:1\n")
+    for team, pane in (markers or {}).items():
+        d = root / team
+        d.mkdir(exist_ok=True)
+        if not (d / "workers-runtime.env").exists():
+            (d / "workers-runtime.env").write_text("WORKER_x_TARGET=x:1\n")
+        (d / "orchestrator.txt").write_text(pane + "\n")
+    for team, text in (registries or {}).items():
+        d = root / team
+        d.mkdir(exist_ok=True)
+        (d / "workers-runtime.env").write_text(text)
+    store = HostStateStore(stale_after_seconds=60)
+    monkeypatch.setattr(dashboard, "STORE", store)
+    list(store.update_host("h", workers or []))
+    return dashboard._collect_status()["workers"]
+
+
+def test_status_session_eq_team_explicit_marker_sets_orch_keeps_team(
+        hub_at, monkeypatch):
+    """dark:1.1 lives in session `dark`, which is a known team, so the
+    session heuristic would force is_orchestrator=False. orchestrator.txt
+    in the darkarchon team names that pane — badge must still be True,
+    team_name must stay `dark`."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="darkarchon",
+        teams=("dark", "darkarchon"),
+        markers={"darkarchon": "dark:1.1"},
+        workers=[_pane("dark:1.1", "darkarchon", role="worker-invited",
+                       external=True, window_name="grok")],
+    )
+    w = next(x for x in workers if x["target"] == "dark:1.1")
+    assert w["team_name"] == "dark"
+    assert w["is_orchestrator"] is True
+
+
+def test_status_session_neq_team_explicit_marker_still_orch(hub_at, monkeypatch):
+    """hermes:1.1 is not a known team session; marker in 3hour-team. Today's
+    elif forced_team path already sets orch=True — must not regress."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour-team",
+        teams=("3hour-team",),
+        markers={"3hour-team": "hermes:1.1"},
+        workers=[_pane("hermes:1.1", "hermes", role="worker",
+                       window_name="hermes")],
+    )
+    w = next(x for x in workers if x["target"] == "hermes:1.1")
+    assert w["is_orchestrator"] is True
+
+
+def test_status_unmarked_worker_is_not_orch(hub_at, monkeypatch):
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="dark",
+        teams=("dark",),
+        workers=[_pane("dark:2.1", "website-ui", role="website-ui",
+                       window_name="website-ui")],
+    )
+    w = next(x for x in workers if x["name"] == "website-ui")
+    assert w["is_orchestrator"] is False
+    assert w["team_name"] == "dark"
+
+
+def test_status_registered_orchestrator_role_still_orch(hub_at, monkeypatch):
+    """Yesterday's overlay: role=orchestrator must still raise the flag
+    through the real _collect_status path, not only _apply_display_grouping."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour-team",
+        teams=("3hour-team",),
+        registries={
+            "3hour-team": (
+                "WORKER_voc_1_NAME=voc-1\n"
+                "WORKER_voc_1_TARGET=voc-1:voc-1\n"
+                "WORKER_voc_1_SESSION=voc-1\n"
+                "WORKER_voc_1_ROLE=orchestrator\n"
+            ),
+        },
+        workers=[_pane("voc-1:voc-1.0", "voc-1", role="orchestrator",
+                       window_name="voc-1", kind="registered")],
+    )
+    w = next(x for x in workers if x["name"] == "voc-1")
+    assert w["is_orchestrator"] is True
+
+
+def test_status_stale_index_marker_does_not_badge_staff(hub_at, monkeypatch):
+    """orchestrator.txt still says 3hour:1.1 from when the orch sat at
+    index 1. After respawn, index 1 is website-ui (registered, role=
+    website-ui). Must not inherit the orch badge."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour",
+        teams=("3hour",),
+        markers={"3hour": "3hour:1.1"},
+        registries={
+            "3hour": (
+                "WORKER_ui_NAME=website-ui\n"
+                "WORKER_ui_TARGET=3hour:website-ui\n"
+                "WORKER_ui_ROLE=website-ui\n"
+                "WORKER_ui_WINDOW_ID=@11\n"
+            ),
+        },
+        workers=[_pane("3hour:1.1", "website-ui", role="website-ui",
+                       window_name="website-ui", window_id="@11",
+                       kind="registered")],
+    )
+    w = next(x for x in workers if x["name"] == "website-ui")
+    assert w["team_name"] == "3hour"
+    assert w["is_orchestrator"] is False
+
+
+def test_status_new_marker_does_not_badge_discovered_at_old_index(
+        hub_at, monkeypatch):
+    """New-format marker (has @id). Index 1 is now an unregistered claude
+    pane — staff guard would let it through. Must not match on pane key."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour",
+        teams=("3hour",),
+        markers={"3hour": "3hour:1.1 @14"},
+        workers=[
+            _pane("3hour:1.1", "3hour:1.1", role="", kind="discovered",
+                  window_name="2.1.239", window_id="@99"),
+            _pane("3hour:3.1", "3hour", role="orchestrator",
+                  window_name="3hour", window_id="@14", kind="registered"),
+        ],
+    )
+    by_tgt = {x["target"]: x for x in workers}
+    assert by_tgt["3hour:1.1"]["is_orchestrator"] is False
+    assert by_tgt["3hour:3.1"]["is_orchestrator"] is True
+
+
+def test_status_legacy_marker_still_matches_pane_key(hub_at, monkeypatch):
+    """No window_id on the marker — pane key remains the fallback."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="darkarchon",
+        teams=("dark", "darkarchon"),
+        markers={"darkarchon": "dark:1.1"},
+        workers=[_pane("dark:1.1", "darkarchon", role="worker-invited",
+                       external=True, window_name="grok")],
+    )
+    w = next(x for x in workers if x["target"] == "dark:1.1")
+    assert w["is_orchestrator"] is True
+
+
+def test_status_marker_window_id_beats_reused_index(hub_at, monkeypatch):
+    """New marker format 'pane @window_id'. Index 1 is now staff, but the
+    orch pane kept window id @14 even after it moved to index 3."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour",
+        teams=("3hour",),
+        markers={"3hour": "3hour:1.1 @14"},
+        registries={
+            "3hour": (
+                "WORKER_orch_NAME=3hour\n"
+                "WORKER_orch_TARGET=3hour:3hour\n"
+                "WORKER_orch_ROLE=orchestrator\n"
+                "WORKER_orch_WINDOW_ID=@14\n"
+                "WORKER_ui_NAME=website-ui\n"
+                "WORKER_ui_TARGET=3hour:website-ui\n"
+                "WORKER_ui_ROLE=website-ui\n"
+                "WORKER_ui_WINDOW_ID=@11\n"
+            ),
+        },
+        workers=[
+            _pane("3hour:1.1", "website-ui", role="website-ui",
+                  window_name="website-ui", window_id="@11", kind="registered"),
+            _pane("3hour:3.1", "3hour", role="orchestrator",
+                  window_name="3hour", window_id="@14", kind="registered"),
+        ],
+    )
+    by_name = {x["name"]: x for x in workers}
+    assert by_name["website-ui"]["is_orchestrator"] is False
+    assert by_name["3hour"]["is_orchestrator"] is True
+
+
+def test_status_corrupt_orchestrator_txt_does_not_500(hub_at, monkeypatch):
+    root = hub_at("darkarchon")
+    _make_team(root, "darkarchon")
+    (root / "darkarchon" / "orchestrator.txt").write_bytes(b"dark:1.1\xed\xa0\x80\n")
+    store = HostStateStore(stale_after_seconds=60)
+    monkeypatch.setattr(dashboard, "STORE", store)
+    list(store.update_host("h", [_pane("dark:1.1", "darkarchon", role="worker-invited",
+                                       external=True, window_name="grok")]))
+    data = dashboard._collect_status()
+    assert "workers" in data
+
+
+def test_parse_orch_marker_line_legacy_and_window_id():
+    assert dashboard._parse_orch_marker("dark:1.1") == ("dark:1.1", "")
+    assert dashboard._parse_orch_marker("3hour:1.1 @14") == ("3hour:1.1", "@14")
+    assert dashboard._parse_orch_marker("  hermes:1.1  @9 \n") == ("hermes:1.1", "@9")
+    assert dashboard._parse_orch_marker("") == ("", "")
+
+
+def test_status_fills_session_from_registry_before_grouping(hub_at, monkeypatch):
+    """Wiring: _collect_status must copy WORKER_*_SESSION onto the worker
+    before _apply_display_grouping. Swapping those two steps would leave
+    voc-1 in the fleet group even though the registry records SESSION."""
+    workers = _status_workers(
+        hub_at, monkeypatch,
+        own="3hour-team",
+        teams=("3hour-team",),
+        registries={
+            "3hour-team": (
+                "WORKER_voc_1_NAME=voc-1\n"
+                "WORKER_voc_1_TARGET=voc-1:voc-1\n"
+                "WORKER_voc_1_SESSION=voc-1\n"
+                "WORKER_voc_1_ROLE=orchestrator\n"
+            ),
+        },
+        workers=[_pane("voc-1:voc-1.0", "voc-1", role="orchestrator",
+                       window_name="voc-1", kind="registered", session="")],
+    )
+    w = next(x for x in workers if x["name"] == "voc-1")
+    assert w["session"] == "voc-1"
+    assert w["team_name"] == "voc-1"

@@ -632,7 +632,7 @@ The React UI shows every worker grouped by host → team, with live state badges
 
 Two views, toggled by the bottom-left pill (persisted):
 
-- **Graph** (default) — canvas tree of host → orchestrator → workers. Busy workers glow with a live spinner, in-flight dispatches stream particles from the actual sender (resolved from `incoming_dispatches[].label`), and `spawned_by` lineage (registry `WORKER_<sn>_SPAWNED_BY`, recorded automatically from `$EE_WORKER_NAME` when an orchestrator/hermes calls `spawn-worker.sh`, or via `--spawned-by`) renders as a dashed violet link — so hermes-spawned orchestrators stay visibly attached to hermes even across teams. Space+drag pans, scroll zooms, click opens the detail panel.
+- **Graph** (default) — canvas tree of host → orchestrator → workers. Busy workers glow with a live spinner, in-flight dispatches stream particles from the actual sender (resolved from `incoming_dispatches[].label`), and `spawned_by` lineage (registry `WORKER_<sn>_SPAWNED_BY`, recorded automatically from `$EE_WORKER_NAME` when an orchestrator/hermes calls `spawn-worker.sh`, or via `--spawned-by`) renders as a dashed violet link — so hermes-spawned orchestrators stay visibly attached to hermes even across teams. An orchestrator given its own tmux session (`spawn-worker.sh --session`, recorded as `WORKER_<sn>_SESSION`) is drawn in that session's group even when its registry row still lives in the fleet dir — the fleet remains the dispatch/ask namespace; only the card grouping follows the session. Space+drag pans, scroll zooms, click opens the detail panel.
 - **Cards** — the compact row layout, light/dark themed.
 
 ### Team panel — winding a team down
