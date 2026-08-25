@@ -233,10 +233,16 @@ _persist_spawn_registration() {
     # Record the calling pane as this team's orchestrator so the dashboard
     # can group it with its workers even before any dispatch has been issued.
     if [ -n "${TMUX_PANE:-}" ]; then
-        local _orch
+        local _orch _orch_wid
         _orch="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)"
+        # Caller's window id, not the new worker's — indices get reused.
+        _orch_wid="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null || true)"
         if [ -n "$_orch" ]; then
-            printf '%s\n' "$_orch" > "$STATE_DIR/orchestrator.txt"
+            if [ -n "$_orch_wid" ]; then
+                printf '%s %s\n' "$_orch" "$_orch_wid" > "$STATE_DIR/orchestrator.txt"
+            else
+                printf '%s\n' "$_orch" > "$STATE_DIR/orchestrator.txt"
+            fi
         fi
     fi
 }
