@@ -14,6 +14,7 @@
  */
 
 import type { WorkerState } from '../types/domain';
+import { agentIdentity, type AgentKind } from '../utils/agentProcess';
 import { formatPing } from '../utils/formatTime';
 import type { FlowBurst } from './flows';
 import { shouldDrawLineage, topologyKey, type GraphNode } from './layout';
@@ -64,7 +65,71 @@ const PAL = {
   bad: '#ff5c7a', // dead / rate limited
   orch: '#a78bfa', // orchestrator identity
   orchBorder: 'rgba(167,139,250,0.45)',
+  // AgentLogo.module.css twins — graph canvas is not tokenized.
+  agentClaude: '#e6c3a0',
+  agentClaudeBg: 'rgba(212,165,122,0.16)',
+  agentCodexBg: 'rgba(148,163,184,0.16)',
+  agentGrok: '#a5b4fc',
+  agentGrokBg: 'rgba(129,140,248,0.16)',
 } as const;
+
+const AGENT_CHIP: Record<AgentKind, { fill: string; bg: string }> = {
+  claude: { fill: PAL.agentClaude, bg: PAL.agentClaudeBg },
+  codex: { fill: PAL.muted, bg: PAL.agentCodexBg },
+  grok: { fill: PAL.agentGrok, bg: PAL.agentGrokBg },
+};
+
+/** Canvas chip paint for a worker.process. Null → draw nothing. */
+export function agentChipPaint(
+  process: string | null | undefined
+): { letter: string; fill: string; bg: string } | null {
+  const ident = agentIdentity(process);
+  if (!ident) return null;
+  return { letter: ident.letter, ...AGENT_CHIP[ident.kind] };
+}
+
+export const CHIP_SIZE = 16;
+export const CHIP_PAD_R = 8;
+/** Gap between subtitle right edge and the chip's left edge. */
+export const CHIP_SUBTITLE_GAP = 4;
+export const SUBTITLE_X = 36;
+export const SUBTITLE_MAX_CHARS = 30;
+
+/** Pixel budget for the subtitle. Null → char clip only (no chip). */
+export function subtitlePixelBudget(nodeW: number, hasChip: boolean): number | null {
+  if (!hasChip) return null;
+  return nodeW - CHIP_PAD_R - CHIP_SIZE - CHIP_SUBTITLE_GAP - SUBTITLE_X;
+}
+
+function clipChars(text: string, maxChars: number): string {
+  return text.length > maxChars ? text.slice(0, maxChars - 1) + '…' : text;
+}
+
+/**
+ * Char-cap first (existing 30-char behavior), then shrink to `maxWidth`
+ * when a chip is sharing the subtitle line. `maxWidth === null` keeps the
+ * char clip only — unknown-process nodes have nothing to dodge.
+ */
+export function clipSubtitle(
+  text: string,
+  maxChars: number,
+  maxWidth: number | null,
+  measure: (s: string) => number
+): string {
+  const capped = clipChars(text, maxChars);
+  if (maxWidth == null || measure(capped) <= maxWidth) return capped;
+  const ell = '…';
+  if (measure(ell) > maxWidth) return ell;
+  const body = capped.endsWith(ell) ? capped.slice(0, -1) : capped;
+  let lo = 0;
+  let hi = body.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(body.slice(0, mid) + ell) <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo <= 0 ? ell : body.slice(0, lo) + ell;
+}
 
 interface Burst extends FlowBurst {
   t0: number;
@@ -730,13 +795,19 @@ export class GraphRenderer {
       c.fillText('✓', dx + 7, dy - 6);
     }
 
-    // label
+    // label — different baseline (dy - 3) from the chip; do not width-clip.
     c.fillStyle = PAL.ink;
     c.font = `${n.kind !== 'worker' || n.worker?.isOrchestrator ? 700 : 600} 13px ${MONO}`;
-    c.fillText(this.clip(n.label, 24), x + 36, dy - 3);
+    c.fillText(this.clip(n.label, 24), x + SUBTITLE_X, dy - 3);
 
-    // subtitle
+    const chip = n.kind === 'worker' ? agentChipPaint(n.worker?.process) : null;
+    const subMaxW = subtitlePixelBudget(w, chip !== null);
+
+    // subtitle — same baseline as the chip (dy + 12). Busy detail and idle
+    // role+state both go through clipSubtitle so a chip cannot cover the tail.
     c.font = `10px ${MONO}`;
+    const measure = (s: string) => c.measureText(s).width;
+    const fit = (text: string) => clipSubtitle(text, SUBTITLE_MAX_CHARS, subMaxW, measure);
     if (n.kind === 'worker' && isBusy) {
       const since = this.busySince.get(n.id);
       const secs = since === undefined ? null : Math.floor((t - since) / 1000);
@@ -748,7 +819,7 @@ export class GraphRenderer {
         ? `${glyph} ${detail}`
         : `${glyph} ${verb}…${secs === null ? '' : ` (${secs}s)`}`;
       c.fillStyle = PAL.busy;
-      c.fillText(this.clip(text, 30), x + 36, dy + 12);
+      c.fillText(fit(text), x + SUBTITLE_X, dy + 12);
     } else {
       c.fillStyle = done ? PAL.ok : PAL.muted;
       const fin = n.worker?.finishedAtMs;
@@ -756,7 +827,7 @@ export class GraphRenderer {
         ? `done${fin ? ` · ${formatPing(Date.now() - fin)}` : ''}`
         : STATE_LABEL[state];
       const sub = n.kind === 'worker' ? `${n.sub} · ${stateText}` : n.sub;
-      c.fillText(this.clip(sub, 30), x + 36, dy + 12);
+      c.fillText(fit(sub), x + SUBTITLE_X, dy + 12);
     }
 
     // orchestrator tag + mailbox badge
@@ -785,6 +856,24 @@ export class GraphRenderer {
       c.textAlign = 'center';
       c.fillText(String(mailbox), bx, by + 3);
       c.textAlign = 'left';
+    }
+
+    // LLM chip — bottom-right of worker nodes, subtitle baseline (dy + 12),
+    // below ORCH (y + 14). Mailbox stays top-right. Dead nodes already sit
+    // at globalAlpha 0.45; unknown process → chip is null, skip.
+    if (chip) {
+      const chipX = x + w - CHIP_PAD_R - CHIP_SIZE;
+      const chipY = dy + 12 - CHIP_SIZE / 2;
+      c.fillStyle = chip.bg;
+      this.rr(chipX, chipY, CHIP_SIZE, CHIP_SIZE, 3);
+      c.fill();
+      c.fillStyle = chip.fill;
+      c.font = `700 ${Math.round(CHIP_SIZE * 0.64)}px ${MONO}`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(chip.letter, chipX + CHIP_SIZE / 2, chipY + CHIP_SIZE / 2);
+      c.textAlign = 'left';
+      c.textBaseline = 'alphabetic';
     }
 
     c.globalAlpha = 1;
