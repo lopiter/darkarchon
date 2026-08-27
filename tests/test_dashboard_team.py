@@ -15,8 +15,9 @@ def test_target_match_beats_stale_same_name_entry():
     # reports a window-INDEX target; it must resolve to live-team, never to
     # the stale default.
     teams_by_target = {
-        "live-team:homepage-backend": "live-team",
-        "default:homepage-backend": "default",  # stale leftover, different target
+        "live-team:homepage-backend": ("live-team", "live-team"),
+        # stale leftover, different target
+        "default:homepage-backend": ("default", "default"),
     }
     worker = {
         "target": "live-team:2.1",
@@ -26,19 +27,19 @@ def test_target_match_beats_stale_same_name_entry():
 
 
 def test_direct_window_index_target_match():
-    teams_by_target = {"teamA:1": "teamA"}
+    teams_by_target = {"teamA:1": ("teamA", "teamA")}
     worker = {"target": "teamA:1.0", "window_name": "whatever"}
     assert _lookup_by_target(worker, teams_by_target) == "teamA"
 
 
 def test_no_match_returns_none():
-    teams_by_target = {"teamA:dev": "teamA"}
+    teams_by_target = {"teamA:dev": ("teamA", "teamA")}
     worker = {"target": "teamB:2.1", "window_name": "reviewer"}
     assert _lookup_by_target(worker, teams_by_target) is None
 
 
 def test_empty_target_returns_none():
-    assert _lookup_by_target({"target": ""}, {"x:y": "t"}) is None
+    assert _lookup_by_target({"target": ""}, {"x:y": ("t", "x")}) is None
 
 
 @pytest.fixture
@@ -236,8 +237,10 @@ def test_registry_session_lookup_by_target(hub_at):
         "WORKER_staff_TARGET=3hour:website-ui\n"
     )
     sessions = dashboard._registered_sessions_by_target()
-    assert sessions["voc-1:voc-1"] == "voc-1"
-    assert sessions["@7"] == "voc-1"
+    # Values carry the session the row was registered in, so a window-id hit
+    # can be sanity-checked against the pane that claims it.
+    assert sessions["voc-1:voc-1"] == ("voc-1", "voc-1")
+    assert sessions["@7"] == ("voc-1", "voc-1")
     assert "3hour:website-ui" not in sessions
 
 
@@ -273,11 +276,14 @@ def _pane(target, name, **extra):
 
 
 def _status_workers(hub_at, monkeypatch, *, own="mine", teams=(), markers=None,
-                    registries=None, workers=None):
+                    registries=None, workers=None, host="h", hub_host="h"):
     """Drive Handler._status's collector against a throwaway state root.
 
     `markers` is {team_name: pane_key} written to orchestrator.txt.
     `registries` is {team_name: workers-runtime.env text} overlaying _make_team.
+    `host` is the host id the panes are reported under; `hub_host` is the host
+    the hub itself runs on. They match by default — set them apart to model a
+    remote machine, whose tmux ids mean nothing against the hub's own disk.
     """
     root = hub_at(own)
     for t in teams:
@@ -298,7 +304,8 @@ def _status_workers(hub_at, monkeypatch, *, own="mine", teams=(), markers=None,
         (d / "workers-runtime.env").write_text(text)
     store = HostStateStore(stale_after_seconds=60)
     monkeypatch.setattr(dashboard, "STORE", store)
-    list(store.update_host("h", workers or []))
+    monkeypatch.setattr(dashboard, "HUB_HOST_ID", hub_host)
+    list(store.update_host(host, workers or []))
     return dashboard._collect_status()["workers"]
 
 
@@ -505,3 +512,115 @@ def test_status_fills_session_from_registry_before_grouping(hub_at, monkeypatch)
     w = next(x for x in workers if x["name"] == "voc-1")
     assert w["session"] == "voc-1"
     assert w["team_name"] == "voc-1"
+
+
+# ─── Cross-host tmux identifier collisions ──────────────────────────────────
+# tmux numbers window ids per server, i.e. per machine. The hub reads every
+# registry, marker and state dir off its OWN disk, so those keys describe the
+# hub's machine only. Matching them against a pane reported by another host
+# compares two unrelated namespaces. Observed in production: MacBook-Pro-2's
+# `moto` orchestrator and second-mac's plain shell were both `@17`, and the
+# remote shell was display-grouped under `moto`.
+
+def test_remote_pane_not_grouped_by_colliding_window_id(hub_at, monkeypatch):
+    """The production bug: a DISCOVERED pane on another host shares a window
+    id with a hub-local worker registered to a dedicated session."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["moto"],
+        registries={"moto": (
+            "WORKER_moto_NAME=moto\n"
+            "WORKER_moto_TARGET=moto:moto\n"
+            "WORKER_moto_SESSION=moto\n"
+            "WORKER_moto_WINDOW_ID=@17\n"
+        )},
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("6:1.1", "6:1.1", kind="discovered", role="",
+                       window_name="2.1.247", window_id="@17")],
+    )
+    w = workers[0]
+    assert w["team_name"] == "6", "remote pane must keep its own tmux session"
+    assert not w.get("session")
+
+
+def test_local_pane_still_grouped_by_window_id(hub_at, monkeypatch):
+    """The guard must not cost the hub-local case it exists to serve."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["fleet"],
+        registries={"fleet": (
+            "WORKER_voc_NAME=voc-1\n"
+            "WORKER_voc_TARGET=fleet:voc-1\n"
+            "WORKER_voc_SESSION=voc-1\n"
+            "WORKER_voc_WINDOW_ID=@17\n"
+        )},
+        host="MacBook-Pro-2", hub_host="MacBook-Pro-2",
+        workers=[_pane("fleet:2.1", "voc-1", window_name="voc-1",
+                       window_id="@17")],
+    )
+    assert workers[0]["team_name"] == "voc-1"
+
+
+def test_worker_without_host_is_treated_as_local(hub_at, monkeypatch):
+    """Single-machine setups (and payloads predating multi-host reporting)
+    report no host at all — they must keep the local shortcuts."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["fleet"],
+        registries={"fleet": (
+            "WORKER_voc_NAME=voc-1\n"
+            "WORKER_voc_TARGET=fleet:voc-1\n"
+            "WORKER_voc_SESSION=voc-1\n"
+            "WORKER_voc_WINDOW_ID=@17\n"
+        )},
+        host="", hub_host="whatever",
+        workers=[_pane("fleet:2.1", "voc-1", window_name="voc-1",
+                       window_id="@17")],
+    )
+    assert workers[0]["team_name"] == "voc-1"
+
+
+def test_remote_marker_window_id_does_not_badge_orchestrator(hub_at, monkeypatch):
+    """orchestrator.txt is written on the hub's disk about the hub's tmux —
+    its window id must not badge a same-id pane on another machine."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", markers={"mine": "mine:1.1 @17"},
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("6:1.1", "6:1.1", kind="discovered", role="",
+                       window_id="@17")],
+    )
+    assert workers[0]["is_orchestrator"] is False
+
+
+def test_discovered_pane_never_pulled_out_by_a_registry_session(hub_at, monkeypatch):
+    """Second guard, independent of host: the dedicated-session map is built
+    from registry rows, so a pane that matched no registration must not be
+    regrouped by one. Mirrors the kind check the team_name branch already had."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["fleet"],
+        registries={"fleet": (
+            "WORKER_voc_NAME=voc-1\n"
+            "WORKER_voc_TARGET=solo:1\n"
+            "WORKER_voc_SESSION=voc-1\n"
+        )},
+        host="h", hub_host="h",
+        workers=[_pane("solo:1.1", "solo:1.1", kind="discovered", role="",
+                       window_name="zsh")],
+    )
+    assert workers[0]["team_name"] == "solo"
+
+
+def test_stale_window_id_in_another_session_is_ignored(hub_at, monkeypatch):
+    """Intra-host variant: tmux restarts ids at @0 when its server does, so a
+    stale row can collide with an unrelated new window on the same machine.
+    Same guard worker_resolver._window_id_match already applies."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["fleet"],
+        registries={"fleet": (
+            "WORKER_old_NAME=old\n"
+            "WORKER_old_TARGET=deadsess:old\n"
+            "WORKER_old_SESSION=archived\n"
+            "WORKER_old_WINDOW_ID=@3\n"
+        )},
+        host="h", hub_host="h",
+        workers=[_pane("newsess:1.1", "newsess:1.1", kind="discovered",
+                       role="", window_name="zsh", window_id="@3")],
+    )
+    assert workers[0]["team_name"] == "newsess"
