@@ -37,6 +37,7 @@ from lib.team_index import build_index, discover_teams  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
 from lib.peer_sessions import annotate_workers_with_peer_names  # noqa: E402
 from lib.worker_state import annotate_workers_with_hooks  # noqa: E402
+from lib.worker_teams import annotate_workers_with_team_facts  # noqa: E402
 
 
 _env_root = os.environ.get("DARKARCHON_STATE_ROOT")
@@ -80,8 +81,8 @@ def _http_post_json(url: str, payload: dict, timeout: float = 3.0) -> int:
         return -1
 
 
-def _discover_state_dirs(root: Path) -> list[Path]:
-    """Every team state dir under `root`, oldest registry first.
+def _discover_teams(root: Path) -> list[tuple[Path, str]]:
+    """Every team under `root` as (state_dir, team_name), oldest registry first.
 
     Since the agent is host-scoped it has no team of its own — every team on the
     box is equally its business, and taking registry lookup and heartbeat lookup
@@ -92,7 +93,7 @@ def _discover_state_dirs(root: Path) -> list[Path]:
     entry was never cleaned up, and the live registration is the one written
     last.
     """
-    return [d for d, _name in discover_teams(root, order="mtime")]
+    return discover_teams(root, order="mtime")
 
 
 def _merge_registries(state_dirs: list[Path]) -> dict:
@@ -104,7 +105,8 @@ def _merge_registries(state_dirs: list[Path]) -> dict:
 
 
 def report_once(cfg: AgentConfig) -> int:
-    state_dirs = _discover_state_dirs(cfg.state_root)
+    teams_with_dirs = _discover_teams(cfg.state_root)
+    state_dirs = [d for d, _name in teams_with_dirs]
     registry = _merge_registries(state_dirs)
     # Feed the registry's recorded agent kind into the scanner so it routes each
     # registered worker to the right detector (codex vs claude) — authoritative
@@ -128,6 +130,10 @@ def report_once(cfg: AgentConfig) -> int:
     # session for cross-session messaging; joining it by pane gives each Claude
     # pane a copyable `peer_name` any local session can SendMessage to.
     workers = annotate_workers_with_peer_names(workers)
+    # Team ownership and orchestrator markers live in state dirs only this host
+    # can read, and are keyed by tmux ids only this host's server can resolve.
+    # Same reason the team index below is built here rather than on the hub.
+    workers = annotate_workers_with_team_facts(workers, teams_with_dirs)
     # A host's state dirs are only visible to that host, so the team index has
     # to be built here and carried up rather than read off the hub's own disk —
     # otherwise a remote host's teams have no age at all, and one whose name

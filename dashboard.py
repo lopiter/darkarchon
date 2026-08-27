@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # allow `from lib.xxx import ...`
 
 from lib.hub_store import HostStateStore  # noqa: E402
+from lib.orch_markers import marker_team_for, read_markers  # noqa: E402
 from lib.sse import SseBroker  # noqa: E402
 from lib.task_store import TaskStore  # noqa: E402
 from lib.team_index import classify, discover_teams, iso_to_epoch  # noqa: E402
@@ -577,54 +578,6 @@ def _lookup_by_target(worker: dict, by_target: dict) -> str | None:
     return None
 
 
-def _parse_orch_marker(line: str) -> tuple[str, str]:
-    """Split one orchestrator.txt line into (pane_key, window_id).
-
-    Legacy: `session:win.pane`. New: `session:win.pane @14` (window_id
-    from tmux, always starts with @). One line either way.
-    """
-    raw = (line or "").strip()
-    if not raw:
-        return "", ""
-    pane, sep, tail = raw.rpartition(" ")
-    if sep and tail.startswith("@") and pane:
-        return pane.strip(), tail
-    return raw, ""
-
-
-def _orchestrator_marker_panes(
-    state_dirs: list | None = None,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Explicit orchestrator.txt markers.
-
-    Returns (by_pane, by_window_id), each {key: team_name}. Window id is
-    preferred for the badge — pane indices get reused after a respawn.
-    """
-    by_pane: dict[str, str] = {}
-    by_window_id: dict[str, str] = {}
-    for state_dir, team_name in (state_dirs if state_dirs is not None else _all_state_dirs()):
-        marker = state_dir / "orchestrator.txt"
-        if not marker.exists():
-            continue
-        try:
-            text = marker.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            text = ""
-        if not text:
-            continue
-        # First non-empty line only — the file is still a single marker.
-        line = next((ln for ln in text.splitlines() if ln.strip()), "")
-        pane, window_id = _parse_orch_marker(line)
-        # Window id replaces the pane key — never both. Pane indices are
-        # reused after a respawn; keeping the old key would still badge
-        # whoever sits at sess:1.1.
-        if window_id:
-            by_window_id[window_id] = team_name
-        elif pane:
-            by_pane[pane] = team_name
-    return by_pane, by_window_id
-
-
 def _marker_is_staff(w: dict) -> bool:
     """Secondary guard for *legacy* pane-key markers only.
 
@@ -659,7 +612,7 @@ def _orchestrator_team_index(
     on directory iteration order: `orchestrator.txt` is an explicit marker the
     spawner wrote, dispatch history is inferred, and explicit wins (merged
     last). Callers that need the badge without moving team_name should read
-    `_orchestrator_marker_panes` separately — this merged dict is for grouping.
+    `lib.orch_markers.read_markers` separately — this merged dict is for grouping.
     """
     if registered_by_team is None:
         registered_by_team = _registered_workers_by_team()
@@ -668,7 +621,7 @@ def _orchestrator_team_index(
         state_dirs = _all_state_dirs()
     known_teams = _team_names(state_dirs)
     if from_marker is None:
-        from_marker, _by_wid = _orchestrator_marker_panes(state_dirs)
+        from_marker, _by_wid = read_markers(state_dirs)
     for state_dir, team_name in state_dirs:
         db_path = state_dir / "tasks.db"
         if not db_path.exists():
@@ -711,7 +664,7 @@ def _collect_status() -> dict:
     registered_by_target = _registered_teams_by_target()
     sessions_by_target = _registered_sessions_by_target()
     state_dirs = _all_state_dirs()
-    marker_by_pane, marker_by_wid = _orchestrator_marker_panes(state_dirs)
+    marker_by_pane, marker_by_wid = read_markers(state_dirs)
     orchestrator_team = _orchestrator_team_index(
         registered_by_team, state_dirs, from_marker=marker_by_pane
     )
@@ -731,11 +684,17 @@ def _collect_status() -> dict:
         default_team = sender_key.split(":", 1)[0] if sender_key else ""
         forced_team = orchestrator_team.get(sender_key) if sender_key else None
         hub_team_by_session = _team_for_session(default_team)
-        # Every remaining signal is keyed on a tmux identifier the hub read off
-        # its own disk, so none of them may be consulted for a pane on another
-        # machine — window ids and session:window targets are per-tmux-server.
+        # Every signal below is keyed on a tmux identifier, and those are
+        # per-tmux-server. For the hub's own panes it resolves them off local
+        # disk; for anyone else's it takes the answers that host's agent
+        # already resolved against ITS disk and reported (owner_team /
+        # marker_team). Agents predating those fields simply report neither,
+        # which degrades to session-name grouping rather than to a wrong team.
         local = _is_hub_local(w)
-        registered_team = _lookup_by_target(w, registered_by_target) if local else None
+        if local:
+            registered_team = _lookup_by_target(w, registered_by_target)
+        else:
+            registered_team = (w.get("owner_team") or "").strip() or None
         # team_name priority unchanged: session known-team wins over the
         # marker, so a pane that invited into team X but lives in session Y
         # stays grouped under Y.
@@ -755,12 +714,10 @@ def _collect_status() -> dict:
         # nailed is_orchestrator=False above. New markers match window id
         # only; pane-key fallback is legacy lines without an id. Staff
         # guard is a backstop for those legacy lines.
-        marked = False
-        wid = (w.get("window_id") or "").strip()
-        if local and wid and wid in marker_by_wid:
-            marked = True
-        elif local and sender_key and sender_key in marker_by_pane:
-            marked = True
+        if local:
+            marked = bool(marker_team_for(w, marker_by_pane, marker_by_wid))
+        else:
+            marked = bool((w.get("marker_team") or "").strip())
         if marked and not _marker_is_staff(w):
             w["is_orchestrator"] = True
         # `kind == "registered"` mirrors the team_name branch above: the
