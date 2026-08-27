@@ -11,6 +11,7 @@ import http.server
 import json
 import os
 import queue
+import socket
 import sys
 import threading
 import time
@@ -48,6 +49,13 @@ STATE_DIR = Path(os.environ.get("STATE_DIR") or (Path.home() / ".team"))
 # is wrong when the hub itself runs from a nested worktree state dir.
 STATE_ROOT = STATE_DIR.parent
 SESSION_NAME = "team"
+# Which host's machine this hub process runs on. Every registry, marker and
+# state dir the hub reads off local disk describes THAT machine's tmux server —
+# so anything keyed on a tmux identifier may only be matched against workers
+# reported under this host id. Set by --host-id; otherwise resolved the same
+# way agent.py resolves its own (agent.config HOST_ID, then the hostname), so
+# the hub and its co-located agent agree on the name without extra config.
+HUB_HOST_ID = ""
 STORE: HostStateStore = HostStateStore(stale_after_seconds=30)
 BROKER = SseBroker()
 
@@ -393,55 +401,114 @@ def _registered_workers_by_team() -> dict:
     return result
 
 
+_HUB_HOST_ID_CACHE: dict[Path, str] = {}
+
+
+def _resolve_hub_host_id() -> str:
+    """The host id this hub's own machine reports itself under.
+
+    Mirrors agent.py's resolution (agent.config HOST_ID, else the hostname) so
+    the hub recognises its co-located agent's reports without a second config
+    knob. A mismatch is not fatal — it only costs the local shortcuts that
+    `_is_hub_local` gates, and those all have safe fall-throughs.
+
+    An explicit --host-id short-circuits; the derived answer is memoized on
+    STATE_ROOT, since `_is_hub_local` runs per worker per poll and neither a
+    hostname syscall nor an agent.config read belongs in that loop.
+    """
+    if HUB_HOST_ID:
+        return HUB_HOST_ID
+    cached = _HUB_HOST_ID_CACHE.get(STATE_ROOT)
+    if cached is not None:
+        return cached
+    resolved = _read_hub_host_id()
+    _HUB_HOST_ID_CACHE[STATE_ROOT] = resolved
+    return resolved
+
+
+def _read_hub_host_id() -> str:
+    """Uncached half of `_resolve_hub_host_id`: agent.config, else hostname."""
+    cfg = STATE_ROOT / "agent.config"
+    if cfg.exists():
+        try:
+            for line in cfg.read_text(errors="replace").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() == "HOST_ID":
+                    v = v.strip().strip("'").strip('"')
+                    if v:
+                        return v
+        except OSError:
+            pass
+    return socket.gethostname()
+
+
+def _is_hub_local(worker: dict) -> bool:
+    """True when this worker's pane lives on the machine running the hub.
+
+    tmux identifiers — window ids (`@17`) and `session:window` targets — are
+    namespaced per tmux server, i.e. per machine. The registries, orchestrator
+    markers and state dirs the hub reads come off its OWN disk, so matching
+    them against a worker reported by another host compares two unrelated
+    namespaces: MacBook-Pro-2's `moto` pane and second-mac's shell pane were
+    both `@17`, and the remote one was display-grouped into `moto`.
+
+    A worker with no host at all predates multi-host reporting (or comes from a
+    single-machine setup with no agent); it is local by definition.
+    """
+    host = (worker.get("host") or "").strip()
+    return not host or host == _resolve_hub_host_id()
+
+
+def _index_registries(value_of) -> dict:
+    """Index every team registry by TARGET and WINDOW_ID.
+
+    `value_of(meta, team_name)` returns the value to store, or "" to skip the
+    entry. Result: {key: (value, registered_session)} — the session the entry
+    was registered in rides along so `_lookup_by_target` can sanity-check a
+    window-id hit (see `_window_id_ok`).
+
+    WINDOW_ID is indexed as well as TARGET because a renamed window still
+    resolves to its worker via the id, and grouping has to follow or the pane
+    keeps its name but loses its team.
+    """
+    result: dict[str, tuple[str, str]] = {}
+    for state_dir, team_name in _all_state_dirs():
+        for meta in parse_registry_file(state_dir / "workers-runtime.env").values():
+            value = value_of(meta, team_name)
+            if not value:
+                continue
+            target = meta.get("target") or ""
+            entry = (value, target.split(":", 1)[0])
+            if target:
+                result[target] = entry
+            window_id = meta.get("window_id") or ""
+            if window_id:
+                result[window_id] = entry
+    return result
+
+
 def _registered_teams_by_target() -> dict:
-    """{registry TARGET (session:window) -> team_name} across the hub's team dirs.
+    """{registry TARGET or WINDOW_ID -> (team_name, registered_session)}.
 
     Target-keyed, unlike `_registered_workers_by_team` (name-keyed). A worker
     NAME duplicated across teams — e.g. a stale leftover entry in one team plus
     the live entry in another — no longer collides on team assignment, because a
     pane only matches the registry entry that lists ITS actual target.
     """
-    import re as _re
-
-    result: dict[str, str] = {}
-    for state_dir, team_name in _all_state_dirs():
-        reg_file = state_dir / "workers-runtime.env"
-        if not reg_file.exists():
-            continue
-        try:
-            text = reg_file.read_text(errors="replace")
-        except OSError:
-            continue
-        # WINDOW_ID as well as TARGET: a renamed window still resolves to its
-        # worker via the id, and team assignment has to follow or the pane
-        # keeps its name but loses its group.
-        for m in _re.finditer(r"^WORKER_\w+_(?:TARGET|WINDOW_ID)=(.+)$", text, _re.M):
-            val = m.group(1).strip().strip("'").strip('"')
-            if val:
-                result[val] = team_name
-    return result
+    return _index_registries(lambda meta, team_name: team_name)
 
 
 def _registered_sessions_by_target() -> dict:
-    """{registry TARGET or WINDOW_ID -> dedicated SESSION} across team dirs.
+    """{registry TARGET or WINDOW_ID -> (dedicated SESSION, registered_session)}.
 
     spawn-worker.sh --session writes WORKER_*_SESSION while leaving the
     registry row in the caller's team. The hub uses this to display-group
     that worker under the dedicated session instead of the fleet dir.
     """
-    result: dict[str, str] = {}
-    for state_dir, _team_name in _all_state_dirs():
-        for meta in parse_registry_file(state_dir / "workers-runtime.env").values():
-            sess = meta.get("session") or ""
-            if not sess:
-                continue
-            target = meta.get("target") or ""
-            if target:
-                result[target] = sess
-            window_id = meta.get("window_id") or ""
-            if window_id:
-                result[window_id] = sess
-    return result
+    return _index_registries(lambda meta, _team_name: meta.get("session") or "")
 
 
 def _apply_display_grouping(worker: dict) -> None:
@@ -458,6 +525,24 @@ def _apply_display_grouping(worker: dict) -> None:
         worker["is_orchestrator"] = True
 
 
+def _window_id_ok(key: str, registered_session: str, pane_session: str) -> bool:
+    """Whether a window-id hit is trustworthy.
+
+    A window id is immutable for the window's lifetime, which is what makes it
+    the one key a rename can't invalidate. It is not immortal: tmux restarts
+    numbering from @0 when its server does, so a stale registry entry can
+    collide with an unrelated new window. Requiring the session to match too
+    costs nothing and keeps that collision no more likely than the name-based
+    matching it sits in front of.
+
+    Same guard as `worker_resolver._window_id_match` — this is the hub-side
+    copy of that lookup and drifted without it.
+    """
+    if not key.startswith("@"):
+        return True
+    return not registered_session or registered_session == pane_session
+
+
 def _lookup_by_target(worker: dict, by_target: dict) -> str | None:
     """Look up a registry map keyed by tmux TARGET / WINDOW_ID.
 
@@ -465,7 +550,11 @@ def _lookup_by_target(worker: dict, by_target: dict) -> str | None:
     session). The registry stores `session:window-name`; a scanned pane
     reports `session:window-index.pane-index`. Try both shapes (and the
     worker's window_name) so a renamed window still resolves, and a
-    same-NAME entry in another team does not."""
+    same-NAME entry in another team does not.
+
+    Callers must gate on `_is_hub_local` first: every key here is a tmux
+    identifier read off the hub's own disk, meaningless against another
+    machine's tmux server."""
     target = worker.get("target", "")
     if not target:
         return None
@@ -479,8 +568,12 @@ def _lookup_by_target(worker: dict, by_target: dict) -> str | None:
     if window_name and session:
         candidates.append(f"{session}:{window_name}")
     for c in candidates:
-        if c in by_target:
-            return by_target[c]
+        hit = by_target.get(c)
+        if hit is None:
+            continue
+        value, registered_session = hit
+        if _window_id_ok(c, registered_session, session):
+            return value
     return None
 
 
@@ -638,7 +731,11 @@ def _collect_status() -> dict:
         default_team = sender_key.split(":", 1)[0] if sender_key else ""
         forced_team = orchestrator_team.get(sender_key) if sender_key else None
         hub_team_by_session = _team_for_session(default_team)
-        registered_team = _lookup_by_target(w, registered_by_target)
+        # Every remaining signal is keyed on a tmux identifier the hub read off
+        # its own disk, so none of them may be consulted for a pane on another
+        # machine — window ids and session:window targets are per-tmux-server.
+        local = _is_hub_local(w)
+        registered_team = _lookup_by_target(w, registered_by_target) if local else None
         # team_name priority unchanged: session known-team wins over the
         # marker, so a pane that invited into team X but lives in session Y
         # stays grouped under Y.
@@ -660,13 +757,17 @@ def _collect_status() -> dict:
         # guard is a backstop for those legacy lines.
         marked = False
         wid = (w.get("window_id") or "").strip()
-        if wid and wid in marker_by_wid:
+        if local and wid and wid in marker_by_wid:
             marked = True
-        elif sender_key and sender_key in marker_by_pane:
+        elif local and sender_key and sender_key in marker_by_pane:
             marked = True
         if marked and not _marker_is_staff(w):
             w["is_orchestrator"] = True
-        if not (w.get("session") or "").strip():
+        # `kind == "registered"` mirrors the team_name branch above: the
+        # dedicated-session map is built from registry rows, so a pane that
+        # matched no registration must not be pulled out of its own session
+        # by one. Without it a bare shell was grouped under a fleet team.
+        if local and w.get("kind") == "registered" and not (w.get("session") or "").strip():
             found = _lookup_by_target(w, sessions_by_target)
             if found:
                 w["session"] = found
@@ -815,7 +916,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
-    global STATE_DIR, STATE_ROOT, SESSION_NAME, STORE
+    global STATE_DIR, STATE_ROOT, SESSION_NAME, STORE, HUB_HOST_ID
     global TEAM_DORMANT_DAYS, TEAM_STALE_DAYS
 
     p = argparse.ArgumentParser()
@@ -826,6 +927,11 @@ def main():
     p.add_argument(
         "--state-root",
         help="parent of the team state dirs (default: parent of --state-dir)",
+    )
+    p.add_argument(
+        "--host-id",
+        help="host id this machine's agent reports under "
+             "(default: agent.config HOST_ID, else hostname)",
     )
     p.add_argument("--stale-after", type=float, default=30.0)
     p.add_argument("--evict-after", type=float, default=300.0)
@@ -838,6 +944,7 @@ def main():
     SESSION_NAME = args.session_name
     STATE_DIR = Path(args.state_dir)
     STATE_ROOT = Path(args.state_root) if args.state_root else STATE_DIR.parent
+    HUB_HOST_ID = args.host_id or ""
     TEAM_DORMANT_DAYS = args.dormant_days
     TEAM_STALE_DAYS = args.stale_days
     STORE = HostStateStore(
@@ -848,6 +955,7 @@ def main():
     print(f"Team hub [{SESSION_NAME}] → http://{args.host}:{args.port}")
     print(f"State dir:        {STATE_DIR}")
     print(f"State root:       {STATE_ROOT} ({len(_all_state_dirs())} teams)")
+    print(f"Hub host id:      {_resolve_hub_host_id()}")
     print(f"Stale-after:      {args.stale_after}s")
     print(f"Evict-after:      {args.evict_after}s")
     print("Ctrl-C to stop.")
