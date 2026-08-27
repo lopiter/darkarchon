@@ -17,7 +17,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from dashboard import _parse_orch_marker  # noqa: E402
+from lib.orch_markers import parse_marker_line  # noqa: E402
 from lib.tmux_scanner import looks_like_agent_process  # noqa: E402
 from lib.worker_resolver import parse_registry_file  # noqa: E402
 
@@ -154,7 +154,7 @@ def plan_one(
         return {"action": "skip", "path": str(path), "team": team,
                 "detail": f"unreadable: {exc}"}
     line = next((ln for ln in raw.splitlines() if ln.strip()), "")
-    pane, wid = _parse_orch_marker(line)
+    pane, wid = parse_marker_line(line)
     if not pane and not wid:
         return {"action": "delete", "path": str(path), "team": team,
                 "detail": "empty marker", "old": line}

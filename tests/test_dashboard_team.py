@@ -4,6 +4,7 @@ stale leftover entry) must not hijack the team. Resolution is by tmux TARGET."""
 import pytest
 
 from lib.hub_store import HostStateStore
+from lib.orch_markers import parse_marker_line
 
 import dashboard
 from dashboard import _all_state_dirs, _lookup_by_target
@@ -484,10 +485,10 @@ def test_status_corrupt_orchestrator_txt_does_not_500(hub_at, monkeypatch):
 
 
 def test_parse_orch_marker_line_legacy_and_window_id():
-    assert dashboard._parse_orch_marker("dark:1.1") == ("dark:1.1", "")
-    assert dashboard._parse_orch_marker("3hour:1.1 @14") == ("3hour:1.1", "@14")
-    assert dashboard._parse_orch_marker("  hermes:1.1  @9 \n") == ("hermes:1.1", "@9")
-    assert dashboard._parse_orch_marker("") == ("", "")
+    assert parse_marker_line("dark:1.1") == ("dark:1.1", "")
+    assert parse_marker_line("3hour:1.1 @14") == ("3hour:1.1", "@14")
+    assert parse_marker_line("  hermes:1.1  @9 \n") == ("hermes:1.1", "@9")
+    assert parse_marker_line("") == ("", "")
 
 
 def test_status_fills_session_from_registry_before_grouping(hub_at, monkeypatch):
@@ -624,3 +625,91 @@ def test_stale_window_id_in_another_session_is_ignored(hub_at, monkeypatch):
                        role="", window_name="zsh", window_id="@3")],
     )
     assert workers[0]["team_name"] == "newsess"
+
+
+# ─── Remote hosts report the facts the hub cannot read ──────────────────────
+# A state dir is not readable across machines, so each host's agent resolves
+# its own team ownership and orchestrator markers and reports them. The hub
+# keeps the grouping policy; it just takes the inputs from whoever can see them.
+
+def test_remote_marker_team_earns_the_orchestrator_badge(hub_at, monkeypatch):
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("small-star:1.1", "small-star:1.1", kind="discovered",
+                       role="", window_id="@11", marker_team="small-star")],
+    )
+    assert workers[0]["is_orchestrator"] is True
+
+
+def test_remote_owner_team_groups_the_worker(hub_at, monkeypatch):
+    """A registered worker whose tmux session is not its team name — the hub
+    cannot see the registry that says so, but its host can."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("worktrees:2.1", "api", window_id="@8",
+                       owner_team="voc-fleet")],
+    )
+    assert workers[0]["team_name"] == "voc-fleet"
+
+
+def test_remote_owner_team_ignored_for_discovered_pane(hub_at, monkeypatch):
+    """Same `kind` guard the local path uses — a pane matching no registry
+    keeps its own session even if a stale owner_team rode along."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("6:1.1", "6:1.1", kind="discovered", role="",
+                       window_id="@17", owner_team="moto")],
+    )
+    assert workers[0]["team_name"] == "6"
+
+
+def test_old_agent_without_the_fields_degrades_to_session_grouping(hub_at, monkeypatch):
+    """An agent predating these fields reports neither. The worker must fall
+    back to its own tmux session — never to a hub-local team."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["moto"],
+        registries={"moto": (
+            "WORKER_moto_NAME=moto\n"
+            "WORKER_moto_TARGET=moto:moto\n"
+            "WORKER_moto_SESSION=moto\n"
+            "WORKER_moto_WINDOW_ID=@17\n"
+        )},
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("small-star:2.1", "eoding-frontend", window_id="@17")],
+    )
+    w = workers[0]
+    assert w["team_name"] == "small-star"
+    assert w["is_orchestrator"] is False
+
+
+def test_remote_marker_still_blocked_for_staff_with_legacy_shape(hub_at, monkeypatch):
+    """_marker_is_staff applies to reported markers too: a named staff worker
+    is not the team's parent just because an old pane-key line matched."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("small-star:5.1", "website-ui", role="website-ui",
+                       window_id="@15", marker_team="small-star")],
+    )
+    assert workers[0]["is_orchestrator"] is False
+
+
+def test_local_worker_ignores_reported_fields(hub_at, monkeypatch):
+    """The hub reads its own disk for its own panes; a reported owner_team
+    must not override what the hub can see first-hand."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=["fleet"],
+        registries={"fleet": (
+            "WORKER_voc_NAME=voc-1\n"
+            "WORKER_voc_TARGET=fleet:voc-1\n"
+            "WORKER_voc_SESSION=voc-1\n"
+            "WORKER_voc_WINDOW_ID=@17\n"
+        )},
+        host="MacBook-Pro-2", hub_host="MacBook-Pro-2",
+        workers=[_pane("fleet:2.1", "voc-1", window_name="voc-1",
+                       window_id="@17", owner_team="wrong-team")],
+    )
+    assert workers[0]["team_name"] == "voc-1"

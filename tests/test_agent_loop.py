@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from agent import AgentConfig, _discover_state_dirs, _merge_registries, report_once
+from agent import AgentConfig, _discover_teams, _merge_registries, report_once
 
 
 def _write_registry(state_dir, worker, target, role="service-role"):
@@ -100,7 +100,7 @@ def test_discovery_finds_flat_and_nested_team_dirs(tmp_path):
     (tmp_path / "no-registry").mkdir()
     (tmp_path / "agent.config").write_text("HUB_URL=http://hub.test\n")
 
-    dirs = _discover_state_dirs(tmp_path)
+    dirs = [d for d, _name in _discover_teams(tmp_path)]
 
     assert set(dirs) == {
         tmp_path / "teamA",
@@ -119,7 +119,7 @@ def test_freshest_registration_wins_on_duplicate_target(tmp_path):
     os.utime(stale, (1_000_000, 1_000_000))
     os.utime(live, (2_000_000, 2_000_000))
 
-    merged = _merge_registries(_discover_state_dirs(tmp_path))
+    merged = _merge_registries([d for d, _n in _discover_teams(tmp_path)])
 
     assert merged["hostA:1"]["name"] == "current"
 
