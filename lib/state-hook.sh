@@ -4,8 +4,14 @@
 # `claude --settings <hooks-file>`; each hook event maps to one state:
 #
 #   SessionStart / Stop  → idle           UserPromptSubmit → busy
-#   Notification         → see below      PreCompact       → compacting
-#   SessionEnd           → ended
+#   PostToolUse          → busy           PreCompact       → compacting
+#   Notification         → see below      SessionEnd       → ended
+#
+# PostToolUse is the counterpart to PermissionRequest: Claude Code fires no hook
+# when an approval lands, so without it a granted permission stays recorded as
+# awaiting_permission for the rest of the turn. A tool that ran is proof the
+# worker is working again. It also fires after every OTHER tool call, which the
+# fast path below makes free.
 #
 # Notification is the one event that does not map to a single state — Claude
 # Code fires it for several unrelated things. The receiver splits them by
@@ -38,6 +44,33 @@ SD="${EE_STATE_DIR:-${STATE_DIR:-}}"
 # `cat` executable would capture the hook payload. Falls back to a bare `cat`
 # for the rare host where `command -p` finds nothing.
 PAYLOAD="$({ command -p cat 2>/dev/null || cat; } 2>/dev/null || true)"
+
+# Fast path: PostToolUse fires after EVERY tool call, dozens per turn, and what
+# it asks to record is almost always what the record already says. The python
+# below costs ~0.4s per run (interpreter startup alone), so re-asserting an
+# unchanged `busy` would tax every tool call in every worker.
+#
+# The transition this hook exists for — clearing a stale awaiting_permission —
+# is NOT skipped: the guard fires only when the record already reads busy. It
+# also requires the empty detail and the messaging_socket that a write would
+# have produced anyway, so nothing is lost by not writing. ts_epoch stays put
+# deliberately: it marks a transition, and a busy worker staying busy is none.
+#
+# The pattern matched is the exact shape json.dump writes at the end of this
+# file; keep the two in step. Read with the shell builtin, no fork — and note
+# `read` reports failure on the record's missing trailing newline while still
+# assigning the line, so its status is deliberately ignored, not branched on.
+if [ "$STATE" = "busy" ]; then
+    _safe="$(printf '%s' "$WORKER" | tr -c '[:alnum:]_' '_')"
+    _rec="$SD/states/${_safe}.json"
+    if [ -r "$_rec" ]; then
+        _line=""
+        IFS= read -r _line < "$_rec" || true
+        case "$_line" in
+            '{"state": "busy", "detail": "",'*'"messaging_socket": "'*) exit 0 ;;
+        esac
+    fi
+fi
 
 STATE_HOOK_PAYLOAD="$PAYLOAD" python3 - "$WORKER" "$STATE" "$SD" <<'PY' 2>/dev/null || true
 import json, os, re, sys, time

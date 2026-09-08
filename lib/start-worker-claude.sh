@@ -178,6 +178,7 @@ if [ -x "$STATE_HOOK" ]; then
     "UserPromptSubmit":  [{"hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
     "Stop":              [{"hooks": [{"type": "command", "command": "$(_hook idle)"}]}],
     "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": "$(_hook awaiting_permission)"}]}],
+    "PostToolUse":       [{"matcher": "*", "hooks": [{"type": "command", "command": "$(_hook busy)"}]}],
     "Notification":      [{"hooks": [{"type": "command", "command": "$(_hook awaiting_user)"}]}],
     "PreCompact":        [{"hooks": [{"type": "command", "command": "$(_hook compacting)"}]}],
     "SessionEnd":        [{"hooks": [{"type": "command", "command": "$(_hook ended)"}]}]

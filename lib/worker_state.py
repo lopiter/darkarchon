@@ -160,6 +160,12 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
         build or settings merge, so a blocked worker can carry a stale idle or
         busy hook; the screen is unambiguous there (the dialog replaces the
         input prompt) and idle would advertise it as dispatchable.
+      - hook says awaiting_* but scrape sees a running spinner → trust scrape.
+        PermissionRequest fires when the prompt opens and no hook fires when the
+        approval lands, so the record stays blocked for the rest of the turn —
+        under --permission-mode auto, milliseconds after it stopped being true.
+        A pane that is visibly working is not waiting on a human. Same self-heal
+        as the stale-busy rule, in the other direction.
       - hook says idle but scrape sees unsent → user is typing (hooks can't see
         the prompt line) → unsent.
       - otherwise the hook is authoritative.
@@ -188,6 +194,8 @@ def synthesize(hook: dict | None, scrape: dict, is_dead: bool) -> dict:
                 "detail": hook.get("detail", "") or "foreground shell still running",
                 "source": "hook(shells-running)",
             }
+        return {**scrape, "source": "scrape(hook-stale)"}
+    if h.startswith("awaiting_") and s == "busy":
         return {**scrape, "source": "scrape(hook-stale)"}
     if h == "idle" and s == "unsent":
         return {**scrape, "source": "scrape-overlay"}

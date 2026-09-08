@@ -610,3 +610,26 @@ def test_synthesize_question_dialog_overrides_busy_hook():
     r = ws.synthesize({"state": "busy", "detail": ""}, {"state": "awaiting_user", "detail": "option dialog"}, False)
     assert r["state"] == "awaiting_user"
     assert r["source"] == "scrape-overlay"
+
+
+# ── a live spinner outranks a stale awaiting_* hook ──────────────────────────
+# Claude Code fires PermissionRequest when the prompt opens and NOTHING when the
+# approval lands, so the record stays awaiting_permission for the rest of the
+# turn — under --permission-mode auto that is milliseconds after it stops being
+# true. A pane showing a running spinner is by definition not waiting on a
+# human, so scrape self-heals it, mirroring the stale-busy rule above.
+
+def test_stale_awaiting_permission_yields_to_a_busy_scrape():
+    r = ws.synthesize(hook={"state": "awaiting_permission", "detail": ""},
+                      scrape={"state": "busy", "detail": "Hashing…"},
+                      is_dead=False)
+    assert r["state"] == "busy"
+    assert r["detail"] == "Hashing…"
+    assert r["source"] == "scrape(hook-stale)"
+
+
+def test_stale_awaiting_user_yields_to_a_busy_scrape():
+    r = ws.synthesize(hook={"state": "awaiting_user", "detail": "Permission required: Bash"},
+                      scrape={"state": "busy", "detail": "Thinking…"},
+                      is_dead=False)
+    assert r["state"] == "busy"
