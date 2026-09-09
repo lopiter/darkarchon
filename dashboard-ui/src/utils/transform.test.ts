@@ -382,3 +382,27 @@ describe('isHostStale', () => {
     expect(isHostStale(fresh)).toBe(false);
   });
 });
+
+describe('stale recorded agent kind', () => {
+  // The scanner flags a pane whose process name rules out the kind the registry
+  // records. The UI surfaces the pane's own process so the tooltip can say what
+  // it actually saw, rather than guessing which agent replaced the old one.
+  it('carries the pane process through when the record is contradicted', () => {
+    const out = transformRawStatus(
+      res([rw({ process: 'grok', pane_process: '2.1.263', kind_conflict: true })]),
+    );
+    expect(out[0]!.teams[0]!.workers[0]!.kindConflict).toBe('2.1.263');
+  });
+
+  it('leaves kindConflict undefined when the record is accurate', () => {
+    const out = transformRawStatus(
+      res([rw({ process: 'claude', pane_process: '2.1.263', kind_conflict: false })]),
+    );
+    expect(out[0]!.teams[0]!.workers[0]!.kindConflict).toBeUndefined();
+  });
+
+  it('leaves kindConflict undefined when the backend omits the fields', () => {
+    const out = transformRawStatus(res([rw({ process: 'claude' })]));
+    expect(out[0]!.teams[0]!.workers[0]!.kindConflict).toBeUndefined();
+  });
+});

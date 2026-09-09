@@ -52,6 +52,48 @@ def _looks_like_grok_candidate(process: str) -> bool:
     return process == _GROK_PROC_PREFIX or process.startswith(_GROK_PROC_PREFIX + "-")
 
 
+# Agent kinds that run on the node runtime. Their panes are indistinguishable by
+# process name alone — tmux reports the runtime's version string, never the app.
+_NODE_BASED_KINDS = frozenset({"claude", "codex", "gemini"})
+
+
+def _kinds_allowed_by_process(process: str) -> frozenset[str] | None:
+    """Kinds this pane_current_command admits, or None when it proves nothing."""
+    if _looks_like_grok_candidate(process):
+        return frozenset({"grok"})
+    if process in _CODEX_CANDIDATE_PROCS:
+        return frozenset({"codex"})
+    if process == "claude":
+        return frozenset({"claude"})
+    if process == "node" or _NODE_VERSION_RE.match(process):
+        return _NODE_BASED_KINDS
+    return None
+
+
+def kind_conflict(registered_kind: str, process: str) -> bool:
+    """True when the pane's process name rules out the kind the registry records.
+
+    The registry records a kind once, at invite/spawn time, and nothing re-checks
+    it. Restart a window with a different agent and the stale record silently
+    routes the pane to the wrong detector — and, for a worker, to the wrong
+    dispatch transport (lib/dispatch.sh picks send-keys over the messaging socket
+    for grok/codex). This reports the disagreement; it deliberately does NOT
+    correct the routing, which stays registry-first on purpose (a registered kind
+    is what stops codex panes from being misread as claude).
+
+    Only the process name may raise the flag. Screen markers cannot: a pane that
+    merely PRINTS another agent's status line reads as that agent, and this very
+    repo's panes do exactly that when someone greps the detectors. Ambiguity
+    resolves to silence — a warning nobody can trust is worse than no warning.
+    """
+    if not registered_kind:
+        return False
+    allowed = _kinds_allowed_by_process(process or "")
+    if allowed is None:
+        return False
+    return registered_kind not in allowed
+
+
 def _has_codex_marker(plain: str) -> bool:
     lower = plain.lower()
     # Strong standalone signals (busy line / banner) — present in any one suffices.
@@ -339,6 +381,10 @@ def scan_panes(
             {
                 "target": p.target,
                 "process": effective_process,
+                # The raw pane_current_command, kept alongside the routed kind so
+                # a stale registration is visible rather than merely misleading.
+                "pane_process": p.process,
+                "kind_conflict": kind_conflict(registered_kind or "", p.process),
                 "window_name": p.window_name,
                 "window_id": p.window_id,
                 "pane_id": p.pane_id,

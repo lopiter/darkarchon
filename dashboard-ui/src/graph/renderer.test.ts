@@ -34,6 +34,19 @@ describe('agentChipPaint', () => {
     expect(agentChipPaint('')).toBeNull();
     expect(agentChipPaint(undefined)).toBeNull();
   });
+
+  it('rings the chip amber when the pane contradicts the recorded kind', () => {
+    // The letter stays the RECORDED kind: seeing which wrong value is on file is
+    // the point of the warning. The ring says don't trust it.
+    const paint = agentChipPaint('grok', '2.1.263');
+    expect(paint?.letter).toBe('G');
+    expect(paint?.ring).toBe('#ffcf5c');
+  });
+
+  it('leaves the ring off when the record is not contradicted', () => {
+    expect(agentChipPaint('grok')?.ring).toBeUndefined();
+    expect(agentChipPaint('grok', undefined)?.ring).toBeUndefined();
+  });
 });
 
 /** Monospace 10px stand-in (~0.6em). Real canvas widths are checked in-browser. */

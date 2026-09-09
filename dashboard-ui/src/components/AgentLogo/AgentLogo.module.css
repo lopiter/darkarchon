@@ -30,3 +30,15 @@
   color: #a5b4fc;
   background: rgba(129, 140, 248, 0.16);
 }
+
+/* Recorded kind contradicted by what the pane actually runs — the registration
+   is stale. The letter stays: it IS the wrong value, and seeing which wrong
+   value is the point. The amber ring marks it as disputed; the tooltip
+   (agentBadgeTitle) carries the detail. */
+.conflict {
+  opacity: 1;
+  /* Full-strength amber, not --amber-border: at the 12-14px the badge actually
+     renders at, the 0.55-alpha token reads as a rendering artifact rather than
+     a warning. */
+  box-shadow: 0 0 0 1.5px var(--amber);
+}

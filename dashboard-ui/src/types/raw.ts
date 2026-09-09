@@ -37,7 +37,16 @@ export interface RawDispatchEntry {
 
 export interface RawWorker {
   target: string;
+  /** Agent kind the backend routed this pane to (registry-first). */
   process: string;
+  /** Raw tmux pane_current_command. Absent on older backends. */
+  pane_process?: string;
+  /**
+   * The pane's process name rules out the agent kind the registry records —
+   * i.e. the registration is stale (the window was restarted with a different
+   * agent). Advisory only; routing still follows the registry.
+   */
+  kind_conflict?: boolean;
   window_name: string;
   cwd: string;
   pane_pid: string;

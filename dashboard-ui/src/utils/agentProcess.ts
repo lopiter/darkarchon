@@ -25,3 +25,22 @@ export function agentIdentity(process: string | null | undefined): AgentIdentity
   }
   return null;
 }
+
+/**
+ * Tooltip for the agent badge. Null when the process is unknown — callers
+ * render nothing at all in that case.
+ *
+ * `conflict` is the pane's own process name when it rules out the agent kind
+ * the registry records (a window restarted with a different agent). The text
+ * names what was observed rather than guessing which agent replaced the old
+ * one: the process name proves the record is wrong, not what is right.
+ */
+export function agentBadgeTitle(
+  process: string | null | undefined,
+  conflict?: string,
+): string | null {
+  const ident = agentIdentity(process);
+  if (!ident) return null;
+  if (!conflict) return ident.label;
+  return `Recorded as ${ident.label}, but this pane runs "${conflict}" — registration is stale`;
+}

@@ -79,13 +79,21 @@ const AGENT_CHIP: Record<AgentKind, { fill: string; bg: string }> = {
   grok: { fill: PAL.agentGrok, bg: PAL.agentGrokBg },
 };
 
-/** Canvas chip paint for a worker.process. Null → draw nothing. */
+/** Canvas chip paint for a worker.process. Null → draw nothing.
+ *
+ * `conflict` (worker.kindConflict) means the pane's process rules out the kind
+ * the registry records. The letter still shows the RECORDED kind — which wrong
+ * value is on file is exactly what the reader needs — and `ring` marks it as
+ * not to be trusted. Card mode says the same thing with an amber ring on the
+ * AgentLogo badge; keep the two in step. */
 export function agentChipPaint(
-  process: string | null | undefined
-): { letter: string; fill: string; bg: string } | null {
+  process: string | null | undefined,
+  conflict?: string
+): { letter: string; fill: string; bg: string; ring?: string } | null {
   const ident = agentIdentity(process);
   if (!ident) return null;
-  return { letter: ident.letter, ...AGENT_CHIP[ident.kind] };
+  const paint = { letter: ident.letter, ...AGENT_CHIP[ident.kind] };
+  return conflict ? { ...paint, ring: PAL.warn } : paint;
 }
 
 export const CHIP_SIZE = 16;
@@ -800,7 +808,8 @@ export class GraphRenderer {
     c.font = `${n.kind !== 'worker' || n.worker?.isOrchestrator ? 700 : 600} 13px ${MONO}`;
     c.fillText(this.clip(n.label, 24), x + SUBTITLE_X, dy - 3);
 
-    const chip = n.kind === 'worker' ? agentChipPaint(n.worker?.process) : null;
+    const chip =
+      n.kind === 'worker' ? agentChipPaint(n.worker?.process, n.worker?.kindConflict) : null;
     const subMaxW = subtitlePixelBudget(w, chip !== null);
 
     // subtitle — same baseline as the chip (dy + 12). Busy detail and idle
@@ -867,6 +876,12 @@ export class GraphRenderer {
       c.fillStyle = chip.bg;
       this.rr(chipX, chipY, CHIP_SIZE, CHIP_SIZE, 3);
       c.fill();
+      if (chip.ring) {
+        c.strokeStyle = chip.ring;
+        c.lineWidth = 1.5;
+        this.rr(chipX, chipY, CHIP_SIZE, CHIP_SIZE, 3);
+        c.stroke();
+      }
       c.fillStyle = chip.fill;
       c.font = `700 ${Math.round(CHIP_SIZE * 0.64)}px ${MONO}`;
       c.textAlign = 'center';

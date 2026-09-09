@@ -29,6 +29,13 @@ export interface Worker {
   /** Agent process type — 'claude' | 'codex' | 'grok' | other */
   process: string;
   /**
+   * Set when the registry's recorded agent kind is contradicted by what the
+   * pane actually runs; the value is that pane's process name. The registration
+   * is stale — someone restarted the window with a different agent — and until
+   * it is corrected the pane is read by the wrong detector.
+   */
+  kindConflict?: string;
+  /**
    * Invited pane the team does not own. Shutdown treats these apart: the
    * session belongs to whoever invited it, so killing it would take down
    * windows that have nothing to do with this team.

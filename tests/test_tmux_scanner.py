@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from lib import tmux_scanner as ts
 from lib.tmux_scanner import list_llm_panes, scan_panes
 
 
@@ -245,3 +246,69 @@ def test_scan_panes_routes_grok_process_to_grok_detector():
 
     assert workers[0]["process"] == "grok"
     assert workers[0]["state"] == "busy"
+
+
+# ── recorded kind vs. what the pane's process name proves ────────────────────
+# The registry records an agent kind at invite/spawn time and never re-checks it.
+# Swap the agent inside an existing window and the record silently keeps the old
+# kind, which routes the pane to the wrong detector (and, for a worker, the wrong
+# dispatch transport). Screen markers cannot arbitrate this — a pane that merely
+# PRINTS another agent's status line would be misread — so only the process name,
+# which pane content cannot forge, is allowed to raise the flag. Ambiguity always
+# resolves to silence: a warning nobody can trust is worse than none.
+
+def test_kind_conflict_flags_a_native_kind_recorded_on_a_node_runtime():
+    # grok and codex ship as native binaries, so a node version string means the
+    # pane cannot be running the recorded kind. This is the real-world case.
+    assert ts.kind_conflict("grok", "2.1.263") is True
+
+
+def test_kind_conflict_flags_a_node_kind_recorded_on_the_grok_binary():
+    # tmux truncates pane_current_command to 15 chars.
+    assert ts.kind_conflict("claude", "grok-macos-aarc") is True
+
+
+def test_kind_conflict_is_silent_when_the_runtime_admits_the_recorded_kind():
+    # codex and gemini also run on node, so a version string proves nothing
+    # against them.
+    assert ts.kind_conflict("codex", "2.1.263") is False
+    assert ts.kind_conflict("gemini", "node") is False
+
+
+def test_kind_conflict_is_silent_without_process_evidence():
+    # a shell, an editor, an unrecognized binary: no claim either way.
+    assert ts.kind_conflict("grok", "zsh") is False
+    assert ts.kind_conflict("claude", "") is False
+
+
+def test_kind_conflict_is_silent_when_the_record_agrees():
+    assert ts.kind_conflict("claude", "2.1.263") is False
+    assert ts.kind_conflict("grok", "grok-linux-x86_6") is False
+    assert ts.kind_conflict("codex", "codex") is False
+
+
+def test_scan_panes_reports_a_stale_recorded_kind():
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="2.1.263", target="dark:1.1", cwd="/r", window_name="dark")]
+    known = {"dark:dark": "grok"}
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", side_effect=lambda t, with_ansi=False: "❯ \n"):
+            with patch("lib.tmux_scanner.capture_pane_title", return_value="✳ Claude Code"):
+                workers = scan_panes(known_kinds=known)
+
+    assert workers[0]["kind_conflict"] is True
+    assert workers[0]["pane_process"] == "2.1.263"
+
+
+def test_scan_panes_reports_no_conflict_for_an_accurate_record():
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="2.1.263", target="ok:1.1", cwd="/r", window_name="ok")]
+    known = {"ok:ok": "claude"}
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", side_effect=lambda t, with_ansi=False: "❯ \n"):
+            workers = scan_panes(known_kinds=known)
+
+    assert workers[0]["kind_conflict"] is False
+    assert workers[0]["pane_process"] == "2.1.263"
