@@ -12,26 +12,34 @@
  *   - Grok:   'G'
  */
 
-import { agentIdentity } from '../../utils/agentProcess';
+import { agentBadgeTitle, agentIdentity } from '../../utils/agentProcess';
 import styles from './AgentLogo.module.css';
 
 interface Props {
   /** worker.process value — 'claude' | 'codex' | 'grok' | anything else */
   process: string;
+  /**
+   * worker.kindConflict — the pane's own process name when it rules out the
+   * recorded kind. Rings the badge amber and explains itself in the tooltip.
+   */
+  conflict?: string;
   size?: number;
   className?: string;
 }
 
-export function AgentLogo({ process, size = 16, className }: Props) {
+export function AgentLogo({ process, conflict, size = 16, className }: Props) {
   const ident = agentIdentity(process);
   if (!ident) return null;
 
+  const title = agentBadgeTitle(process, conflict) ?? ident.label;
   return (
     <span
-      className={`${styles.logo} ${styles[ident.kind]} ${className ?? ''}`}
+      className={[styles.logo, styles[ident.kind], conflict ? styles.conflict : '', className ?? '']
+        .filter(Boolean)
+        .join(' ')}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.64) }}
-      title={ident.label}
-      aria-label={`${ident.label} agent`}
+      title={title}
+      aria-label={conflict ? title : `${ident.label} agent`}
     >
       {ident.letter}
     </span>

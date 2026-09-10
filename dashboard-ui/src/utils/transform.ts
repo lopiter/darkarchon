@@ -179,6 +179,7 @@ function rawToWorker(rw: RawWorker, refTs: number): Worker {
     role: rw.role,
     tmuxTarget: rw.target,
     process: rw.process,
+    kindConflict: rw.kind_conflict ? rw.pane_process || 'unknown' : undefined,
     external: rw.external,
     detail: rw.detail || undefined,
     isOrchestrator: rw.is_orchestrator,

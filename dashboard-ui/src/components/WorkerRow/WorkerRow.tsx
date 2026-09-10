@@ -150,7 +150,7 @@ export function WorkerRow({ worker, hostStale = false, exiting = false }: Props)
       {isNew && <div className={styles.newDot} aria-label="new awaiting notification" />}
 
       <div className={styles.name}>
-        <AgentLogo process={worker.process} size={14} />
+        <AgentLogo process={worker.process} conflict={worker.kindConflict} size={14} />
         <span>{worker.name}</span>
         {worker.isOrchestrator && <span className={styles.orchTag}>ORCH</span>}
       </div>

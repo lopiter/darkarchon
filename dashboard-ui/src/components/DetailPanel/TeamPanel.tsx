@@ -156,7 +156,7 @@ function RosterSection({ workers }: { workers: Worker[] }) {
             onClick={() => selectWorker(w.id)}
             onContextMenu={onWorkerContextMenu(w)}
           >
-            <AgentLogo process={w.process} size={12} />
+            <AgentLogo process={w.process} conflict={w.kindConflict} size={12} />
             <span className={tp.rosterName}>{w.name}</span>
             {w.external && <span className={tp.extTag}>INVITED</span>}
             <span className={tp.rosterTarget}>{w.tmuxTarget}</span>

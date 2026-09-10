@@ -133,6 +133,20 @@ Workers can be either Claude Code or OpenAI Codex. Pass `--kind` to `spawn-worke
 (default `claude`); `invite-worker.sh` auto-detects the kind from the pane and
 takes `--kind` only to override.
 
+The recorded kind is written once, at invite/spawn time, and routing trusts it over
+process-name and TUI-glyph heuristics — that precedence is what keeps a codex pane
+from being read as claude. Nothing re-checks it, so restarting a window with a
+different agent leaves a stale record that sends the pane to the wrong detector
+(a grok record on a Claude pane pins it `busy` forever) and, for a worker, to the
+wrong dispatch transport. `kind_conflict` (`lib/tmux_scanner.py`) reports that
+disagreement without changing the routing: the dashboard rings the worker's agent
+badge amber and names the observed process in its tooltip. Only
+`pane_current_command` may raise the flag — screen markers cannot, since a pane
+that merely *prints* another agent's status line would read as that agent — and
+ambiguity (a node runtime, a shell, an unknown binary) stays silent. Fix a flagged
+worker with `uninvite-worker.sh <name>` then
+`invite-worker.sh --kind <kind> <name> <session:window>`.
+
 ```bash
 # spawn a Codex worker (needs the `codex` CLI installed + `codex login`)
 $DARKARCHON_HOME/lib/spawn-worker.sh --kind codex reviewer ~/projects/backend review
