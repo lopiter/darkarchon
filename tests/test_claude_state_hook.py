@@ -121,3 +121,27 @@ def test_informational_notification_with_no_prior_record_writes_nothing(tmp_path
     # fall back to the screen instead of recording a guess.
     notify("Claude Code login successful", tmp_path)
     assert not exists(tmp_path)
+
+
+# ── PostToolUse: the signal that an approval landed ─────────────────────────
+# Claude Code fires PermissionRequest when the prompt opens and nothing at all
+# when the approval lands, so that record would stand until the turn's Stop —
+# under --permission-mode auto, hours after it stopped being true. The next tool
+# actually running is the evidence that the worker is working again.
+
+def test_post_tool_use_clears_a_stale_awaiting_permission(tmp_path):
+    run_hook("awaiting_permission", {"hook_event_name": "PermissionRequest"}, tmp_path)
+    run_hook("busy", {"hook_event_name": "PostToolUse"}, tmp_path)
+    assert state_of(tmp_path)["state"] == "busy"
+
+
+def test_repeated_busy_does_not_restart_the_turn_clock(tmp_path):
+    # PostToolUse fires after EVERY tool call, so most of its writes say exactly
+    # what the record already says. ts_epoch marks a transition and this is not
+    # one — bumping it would make every long turn look like a fresh one, and
+    # paying for the write at all taxes every tool call in every worker.
+    run_hook("busy", {"hook_event_name": "UserPromptSubmit"}, tmp_path, sock="/tmp/cc-socks/9.sock")
+    f = tmp_path / "states" / "w1.json"
+    f.write_text(json.dumps({**json.loads(f.read_text()), "ts_epoch": 1_700_000_000}))
+    run_hook("busy", {"hook_event_name": "PostToolUse"}, tmp_path, sock="/tmp/cc-socks/9.sock")
+    assert state_of(tmp_path)["ts_epoch"] == 1_700_000_000
