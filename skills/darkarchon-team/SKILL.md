@@ -183,6 +183,7 @@ $DARKARCHON_HOME/revive-worker.sh <name> --fresh            # clean start; picks
 $DARKARCHON_HOME/revive-worker.sh <name> --session-id <id>  # resume a specific session
 $DARKARCHON_HOME/revive-worker.sh <name> --adopt            # register the agent already in its old pane
 $DARKARCHON_HOME/revive-worker.sh <name> --dry-run          # print the plan only
+$DARKARCHON_HOME/restore-team.sh [--dry-run] [--fresh] [--only <name>...]   # after a reboot: revive EVERY dead worker (resume where recorded, fresh otherwise)
 ```
 
 - Use `--fresh` when the worker was killed **because its context filled up** —

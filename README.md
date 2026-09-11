@@ -397,6 +397,7 @@ tmux carries short triggers only; the filesystem is the message bus.
 | `lib/kill-worker.sh <name>` | Close the worker's tmux window and clean up the registry |
 | `lib/deregister-worker.sh <name>` | Drop a worker from the registry, pane untouched. Refuses a live worker (`--force` overrides) |
 | `revive-worker.sh <name> [--fresh\|--adopt] [--session-id <id>]` | Bring a dead worker back with its conversation (`claude --resume`); `--fresh` starts clean from its handover note, `--adopt` registers whatever agent is already in its old pane |
+| `restore-team.sh [--dry-run] [--fresh] [--only <name>...]` | Revive every dead worker in the team (after a reboot). Resumes where a session id was recorded, respawns fresh where none was |
 | `prune-workers.sh [--dry-run] [--yes]` | Drop every dead registration. Never kills a window |
 | `lib/leave-team.sh --reason <r> --handover -` | Run BY a worker: resign, leave a handover note, tell the orchestrator |
 | `lib/start.sh` | Start every worker in `WORKERS=()` (config.env) |
@@ -568,6 +569,15 @@ revive-worker.sh homepage-backend --adopt   # register the agent already running
 ```
 
 The revived worker is a fresh process with the charter, hooks, heartbeat and MCP tools reattached — the things a hand-relaunched `claude` in the same window does *not* have — plus the previous conversation.
+
+**Restoring a whole team.** A reboot takes every pane at once but leaves the state dir where it was, so the team is not lost — only stopped. `restore-team.sh` runs the revive above for every dead worker in the team:
+
+```bash
+DARKARCHON_TEAM=hotel-ota restore-team.sh --dry-run   # the plan: resume / fresh / skip per worker
+DARKARCHON_TEAM=hotel-ota restore-team.sh             # do it
+```
+
+A worker with a recorded session id is resumed; one without (an invited worker, a codex worker, anything older than the state hook) is respawned fresh rather than refused, so one unresumable worker never blocks the rest. Live workers are skipped, and `--fresh` drops every conversation for the case below. The dashboard's team panel shows the same command, addressed by state dir, whenever a team has dead workers — it is copied, never run from there.
 
 **`--resume` is not always the right answer.** It restores the context exactly as it was, which is what you want after a reboot, and precisely wrong when the worker was killed *because* its context was full: resuming replays it straight back into the wall. For that case the worker should resign on its own way out:
 
