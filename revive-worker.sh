@@ -141,8 +141,11 @@ if [ -n "$WINDOW_ID" ]; then
     FOUND_SESSION="$(tmux display-message -p -t "$WINDOW_ID" '#{session_name}' 2>/dev/null || true)"
     [ -n "$FOUND_SESSION" ] && [ "$FOUND_SESSION" = "$WIN_SESSION" ] && WIN_REF="$WINDOW_ID"
 fi
+# Fall back to the name. Not via `display-message -t`: some tmux versions exit 0
+# with empty output for a target that does not exist, which after a reboot
+# (whole session gone) read as "the old window is still there".
 if [ -z "$WIN_REF" ] && [ -n "$TARGET" ] \
-        && tmux display-message -p -t "=$TARGET" '#{window_id}' >/dev/null 2>&1; then
+        && tmux list-windows -t "=$WIN_SESSION" -F '#W' 2>/dev/null | grep -qx -- "${TARGET#*:}"; then
     WIN_REF="=$TARGET"
 fi
 if [ -n "$WIN_REF" ]; then
