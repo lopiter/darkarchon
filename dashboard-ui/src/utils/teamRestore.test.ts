@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Worker } from '../types/domain';
-import { restorePlan } from './teamRestore';
+import { restoreCommand, restorePlan } from './teamRestore';
 
 function w(overrides: Partial<Worker> = {}): Worker {
   return {
@@ -75,5 +75,11 @@ describe('restorePlan', () => {
     expect(plan.dead).toEqual(['alpha']);
     expect(plan.command).toBeNull();
     expect(plan.dryRun).toBeNull();
+  });
+});
+
+describe('restoreCommand', () => {
+  it('is the same command the panel offers, without needing a worker list', () => {
+    expect(restoreCommand('/s/t')).toBe(restorePlan([w({ state: 'dead' })], '/s/t').command);
   });
 });

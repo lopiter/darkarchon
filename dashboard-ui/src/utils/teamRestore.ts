@@ -27,6 +27,16 @@ export interface RestorePlan {
   dryRun: string | null;
 }
 
+/**
+ * The paste-able restore command for one state dir. Used on its own by the
+ * inactive-teams list, where the hub reports no workers at all — after a
+ * reboot every registration is pane-less, so that is exactly where a team
+ * worth restoring shows up.
+ */
+export function restoreCommand(stateDir: string): string {
+  return `EE_STATE_DIR=${shellQuote(stateDir)} "$DARKARCHON_HOME/restore-team.sh"`;
+}
+
 export function restorePlan(
   workers: Worker[],
   stateDir: string | undefined
@@ -37,9 +47,7 @@ export function restorePlan(
     .filter((w) => w.external || w.process !== 'claude')
     .map((w) => w.name)
     .sort();
-  const base = stateDir
-    ? `EE_STATE_DIR=${shellQuote(stateDir)} "$DARKARCHON_HOME/restore-team.sh"`
-    : null;
+  const base = stateDir ? restoreCommand(stateDir) : null;
   return {
     dead,
     fresh,
