@@ -1,6 +1,6 @@
 # darkarchon
 
-Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex) and xAI [Grok Build](https://x.ai) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex` / `grok`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
+Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex), xAI [Grok Build](https://x.ai) and Google [Antigravity CLI](https://antigravity.google) (`agy`) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex` / `grok`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
 > tmux window = isolated claude process · filesystem = message bus · short trigger over the worker's inbox socket (send-keys for codex)
 
@@ -171,6 +171,31 @@ specific: Enter in a busy grok composer means "send now" and interrupts the
 turn, so `mailbox.sh` holds messages for a busy grok worker and the worker's
 `Stop` hook blocks the turn end with "you have N unread messages" until it
 drains — grok's own keep-working mechanism, no keystrokes.
+
+```bash
+# spawn an Antigravity CLI worker (needs `agy` installed + signed in once)
+$DARKARCHON_HOME/lib/spawn-worker.sh --kind agy reviewer ~/projects/backend review
+```
+
+Antigravity CLI (`agy`) is Google's successor to Gemini CLI and shares nothing
+with its TUI. agy workers launch as a persistent `agy --dangerously-skip-permissions`
+TUI (override via `AGY_FLAGS` / `AGY_MODEL` in `config.env`). agy has no
+system-prompt or hooks flag, but every workspace it opens contributes its
+`.agents/` customizations and `--add-dir` opens an extra one — so
+`lib/start-worker-agy.sh` builds a darkarchon-owned workspace under
+`$STATE_DIR/agy/<worker>/` holding the team contract as an always-on rule
+(same prompt layers as claude, plus `prompts/agy.md` with the `lib/ask.sh` /
+`lib/mailbox.sh` substitutions) and a `hooks.json` whose `PreInvocation` /
+`Stop` hooks feed `lib/agy-state-hook.sh` for event-driven state. Nothing lands
+in the repo or in `~/.gemini/config`. agy sets no OSC title, so the screen
+detector reads its footer ("? for shortcuts" idle, "esc to cancel" busy) and
+its `Requesting permission for:` dialogs. Typing into a busy agy pane queues the
+line as the next prompt (no interruption), and the `Stop` hook still makes a
+worker drain its mailbox before finishing. `PreInvocation` records the
+conversation id, which `revive-worker.sh` / `restore-team.sh` hand back as
+`agy --conversation <id>`. The startup trust dialog is pre-answered by listing
+the worker's cwd in agy's `trustedWorkspaces` (`AGY_AUTO_TRUST`). Verified on
+agy 1.2.2.
 
 Codex workers launch as a persistent `codex --dangerously-bypass-approvals-and-sandbox`
 TUI (no `codex exec`). The dispatch contract is the same one-line trigger; the
@@ -389,8 +414,8 @@ tmux carries short triggers only; the filesystem is the message bus.
 
 | Script | Purpose |
 |---|---|
-| `lib/spawn-worker.sh [--kind claude\|codex\|grok] <name> <cwd> [role]` | Create a new tmux window and start a Claude, Codex or Grok worker in it (default claude) |
-| `invite-worker.sh [--kind claude\|codex\|grok] <name> <session:window> [role]` | Register an existing Claude/Codex/Grok pane as a worker (no respawn; kind auto-detected) |
+| `lib/spawn-worker.sh [--kind claude\|codex\|grok\|agy] <name> <cwd> [role]` | Create a new tmux window and start a Claude, Codex, Grok or Antigravity (agy) worker in it (default claude) |
+| `invite-worker.sh [--kind claude\|codex\|grok\|agy] <name> <session:window> [role]` | Register an existing Claude/Codex/Grok/agy pane as a worker (no respawn; kind auto-detected) |
 | `uninvite-worker.sh <name>` | Remove an invited worker from the registry (pane untouched) |
 | `dispatch-safe.sh [--after <ids>] <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy; `--after` waits for other tasks first |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
@@ -418,7 +443,7 @@ tmux carries short triggers only; the filesystem is the message bus.
 | MCP tool | Legacy sh equivalent | Purpose |
 |---|---|---|
 | `mcp__darkarchon__ask(question, context, blocking=False)` | `lib/ask.sh [--blocking] "<q>"` | File a question for the orchestrator; `blocking` waits for the answer |
-| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@grok`/`@cwd:<dir>` |
+| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@grok`/`@agy`/`@cwd:<dir>` |
 | `mcp__darkarchon__mailbox_drain()` | `lib/mailbox.sh read <self>` | Read & remove own pending messages (stamps `read_at`) |
 | `mcp__darkarchon__status_get()` | (no equivalent) | Self-introspection (mailbox count, recent tasks) |
 

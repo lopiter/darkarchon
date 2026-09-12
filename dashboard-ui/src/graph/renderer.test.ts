@@ -27,6 +27,11 @@ describe('agentChipPaint', () => {
       fill: '#a5b4fc',
       bg: 'rgba(129,140,248,0.16)',
     });
+    expect(agentChipPaint('agy')).toEqual({
+      letter: 'A',
+      fill: '#86efac',
+      bg: 'rgba(74,222,128,0.16)',
+    });
   });
 
   it('returns null for unknown process so the renderer draws nothing', () => {

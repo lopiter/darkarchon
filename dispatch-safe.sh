@@ -249,7 +249,9 @@ checked_dispatch() {
     fi
 
     # ─── --force pre-clear (claude/gemini only): wipe ghost text before the trigger ─
-    if [ "$FORCE" -eq 1 ] && [ "$kind" != "codex" ] && [ "$kind" != "grok" ]; then
+    # Ghost text is a Claude Code notion; codex/grok/agy composers hold only
+    # what a human typed, which --force must not clobber.
+    if [ "$FORCE" -eq 1 ] && [ "$kind" != "codex" ] && [ "$kind" != "grok" ] && [ "$kind" != "agy" ]; then
         tmux send-keys -t "=$TARGET" C-u C-k 2>/dev/null || true
         local bsp=""
         local i

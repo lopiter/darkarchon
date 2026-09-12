@@ -10,13 +10,14 @@
  *   - Claude: 'C'
  *   - Codex:  'X'
  *   - Grok:   'G'
+ *   - Antigravity CLI (agy): 'A'
  */
 
 import { agentBadgeTitle, agentIdentity } from '../../utils/agentProcess';
 import styles from './AgentLogo.module.css';
 
 interface Props {
-  /** worker.process value — 'claude' | 'codex' | 'grok' | anything else */
+  /** worker.process value — 'claude' | 'codex' | 'grok' | 'agy' | anything else */
   process: string;
   /**
    * worker.kindConflict — the pane's own process name when it rules out the

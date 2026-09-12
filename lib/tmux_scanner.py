@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from lib.detectors.claude import classify_claude_state
 from lib.detectors.codex import classify_codex_state
+from lib.detectors.agy import classify_agy_state
 from lib.detectors.grok import classify_grok_state
 
 # Some LLM CLIs (notably Claude Code on macOS) appear in tmux's pane_current_command
@@ -25,6 +26,8 @@ _CODEX_CANDIDATE_PROCS = {"codex"}
 # tmux truncates pane_current_command to 15 chars ("grok-macos-aarc"), so match
 # by prefix. Plain "grok" covers a symlinked/renamed install.
 _GROK_PROC_PREFIX = "grok"
+# agy (Antigravity CLI) is a native binary too; pane_current_command is "agy".
+_AGY_CANDIDATE_PROCS = {"agy"}
 # codex TUI substrings. Spans versions: 0.34 showed a footer
 # ("⏎ send  ⌃J newline  ⌃T transcript"); 0.135 dropped the footer and shows an
 # "OpenAI Codex (vX)" banner + "Working (Ns • esc to interrupt)" while busy.
@@ -52,6 +55,10 @@ def _looks_like_grok_candidate(process: str) -> bool:
     return process == _GROK_PROC_PREFIX or process.startswith(_GROK_PROC_PREFIX + "-")
 
 
+def _looks_like_agy_candidate(process: str) -> bool:
+    return process in _AGY_CANDIDATE_PROCS
+
+
 # Agent kinds that run on the node runtime. Their panes are indistinguishable by
 # process name alone — tmux reports the runtime's version string, never the app.
 _NODE_BASED_KINDS = frozenset({"claude", "codex", "gemini"})
@@ -61,6 +68,8 @@ def _kinds_allowed_by_process(process: str) -> frozenset[str] | None:
     """Kinds this pane_current_command admits, or None when it proves nothing."""
     if _looks_like_grok_candidate(process):
         return frozenset({"grok"})
+    if _looks_like_agy_candidate(process):
+        return frozenset({"agy"})
     if process in _CODEX_CANDIDATE_PROCS:
         return frozenset({"codex"})
     if process == "claude":
@@ -153,7 +162,7 @@ def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
 
 
 def list_llm_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok", "agy"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[PaneInfo]:
@@ -254,6 +263,7 @@ def looks_like_agent_process(process: str) -> bool:
         _looks_like_claude_candidate(process)
         or _looks_like_codex_candidate(process)
         or _looks_like_grok_candidate(process)
+        or _looks_like_agy_candidate(process)
     )
 
 
@@ -270,7 +280,7 @@ def capture_pane(target: str, with_ansi: bool = False) -> str:
 
 
 def scan_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok", "agy"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[dict]:
@@ -322,10 +332,14 @@ def scan_panes(
         claude_proc = _looks_like_claude_candidate(p.process)
         codex_proc = _looks_like_codex_candidate(p.process)
         grok_proc = _looks_like_grok_candidate(p.process)
+        agy_proc = _looks_like_agy_candidate(p.process)
 
         if registered_kind == "grok":
             state = classify_grok_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "grok"
+        elif registered_kind == "agy":
+            state = classify_agy_state(plain, ansi)
+            effective_process = "agy"
         elif registered_kind == "codex":
             state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "codex"
@@ -337,6 +351,11 @@ def scan_panes(
             # glyphs with claude, so never fall through to marker matching.
             state = classify_grok_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "grok"
+        elif agy_proc:
+            # Native agy binary — same story: its `─` rules would read as a
+            # claude marker, so the process name decides.
+            state = classify_agy_state(plain, ansi)
+            effective_process = "agy"
         elif codex_proc:
             # Process is literally `codex` — trust it and use the codex detector.
             # (codex panes can briefly show none of the markers while booting;

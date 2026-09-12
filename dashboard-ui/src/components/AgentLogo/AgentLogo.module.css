@@ -31,6 +31,12 @@
   background: rgba(129, 140, 248, 0.16);
 }
 
+/* Antigravity (agy) badge: mint, distinct from grok's indigo */
+.agy {
+  color: #86efac;
+  background: rgba(74, 222, 128, 0.16);
+}
+
 /* Recorded kind contradicted by what the pane actually runs — the registration
    is stale. The letter stays: it IS the wrong value, and seeing which wrong
    value is the point. The amber ring marks it as disputed; the tooltip

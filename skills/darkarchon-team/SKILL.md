@@ -47,7 +47,7 @@ roster, which is worse than an error.
 **Spawn** — darkarchon launches the agent:
 
 ```bash
-$DARKARCHON_HOME/lib/spawn-worker.sh [--kind claude|codex|grok] [--env K=V] <name> <cwd> [<role>]
+$DARKARCHON_HOME/lib/spawn-worker.sh [--kind claude|codex|grok|agy] [--env K=V] <name> <cwd> [<role>]
 ```
 
 Creates a tmux window named `<name>` in session `<team>` (auto-creating the
@@ -62,24 +62,31 @@ its own `DARKARCHON_TEAM` for the sub-team it manages.
 
 **Choosing the kind (spawn only — invite auto-detects):**
 
-1. User said which ("as codex", "a claude worker", "grok으로") → pass `--kind`.
-2. Otherwise check `command -v claude` / `command -v codex` / `command -v grok`:
+1. User said which ("as codex", "a claude worker", "grok으로", "agy로",
+   "antigravity") → pass `--kind`. "gemini" means `agy` — Antigravity CLI
+   is Google's successor to Gemini CLI.
+2. Otherwise check `command -v claude` / `command -v codex` / `command -v grok` /
+   `command -v agy`:
    - Only one installed → use it silently.
    - Several installed → **ask on every spawn.** Workers are often deliberately
      mixed (a claude dev + a codex reviewer), so never remember one answer as a
      default for the next worker.
 3. codex needs `codex login` (or `OPENAI_API_KEY`) first, or every turn 401s.
-   grok needs a one-time interactive login (`~/.grok/auth.json`).
+   grok needs a one-time interactive login (`~/.grok/auth.json`). agy needs a
+   one-time `agy` Google sign-in (state under `~/.gemini/antigravity-cli`).
 4. codex workers are task-executors only: no team contract, no darkarchon
-   MCP tools (`ask`, `mailbox_send`). grok workers get the full contract via
-   `--rules` and use the shell equivalents (`lib/ask.sh`, `lib/mailbox.sh`);
-   a message sent to a busy grok worker is held until its turn ends (a Stop
-   hook then makes it drain) — never typed mid-turn, which would interrupt it.
+   MCP tools (`ask`, `mailbox_send`). grok and agy workers get the full
+   contract (grok via `--rules`, agy via an always-on rule in a
+   darkarchon-owned `--add-dir` workspace) and use the shell equivalents
+   (`lib/ask.sh`, `lib/mailbox.sh`). A message sent to a busy grok worker is
+   held until its turn ends (a Stop hook then makes it drain) — never typed
+   mid-turn, which would interrupt it. agy queues mid-turn input as its next
+   prompt, so it is notified immediately.
 
 **Invite** — register a pane the user already has running:
 
 ```bash
-$DARKARCHON_HOME/invite-worker.sh [--kind claude|codex|grok] <name> <session:window> [<role>]
+$DARKARCHON_HOME/invite-worker.sh [--kind claude|codex|grok|agy] <name> <session:window> [<role>]
 ```
 
 Kind is auto-detected from pane content; pass `--kind` only to correct it. cwd
@@ -191,7 +198,8 @@ $DARKARCHON_HOME/restore-team.sh [--dry-run] [--fresh] [--only <name>...]   # af
   Plain revive is for reboots and accidental kills.
 - The old window is preserved, renamed `<name>-old`.
 - A revived worker is a new process, so charter, hooks, heartbeat and MCP tools
-  are reattached. A pane the user relaunched by hand has none of those, which is
+  are reattached. claude and agy workers get their conversation back
+  (`claude --resume` / `agy --conversation`); codex and grok always restart fresh. A pane the user relaunched by hand has none of those, which is
   why `--adopt` is the degraded option, not the default.
 - `dead` means "nobody answers to that name" — not that the window is empty.
 
@@ -209,7 +217,7 @@ $DARKARCHON_HOME/lib/mailbox.sh clear <name>
 ```
 
 `<to>` is a worker name or a group: `@all`, `@idle`, `@claude`, `@codex`,
-`@grok`, `@cwd:<dir>`. The sender is never included in its own group send. Group
+`@grok`, `@agy`, `@cwd:<dir>`. The sender is never included in its own group send. Group
 addresses must be written literally with `@`. `outstanding` + `renotify` is the
 recovery path when a worker never picked a message up.
 
@@ -234,8 +242,8 @@ This is raw session chat: no task record, no result file, no busy check. It is
 the way to reach a pane that is not a team worker at all — `dispatch-safe.sh`
 stays the tool for tracked work, `mailbox.sh` for team messaging. The first send
 to a session outside the conversation may come back asking to confirm the target
-by its ref (`darkarchon-c3 [ad0f0f]`); re-send with the ref it prints. codex and
-gemini panes have no session name.
+by its ref (`darkarchon-c3 [ad0f0f]`); re-send with the ref it prints. codex,
+gemini and agy panes have no session name.
 
 ## History
 

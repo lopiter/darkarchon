@@ -587,6 +587,23 @@ def test_ended_session_still_wins_over_a_dialog_left_on_screen():
     assert r["state"] == "dead"
 
 
+# ── resolve routes agy workers to the agy detector ───────────────────────────
+def test_resolve_agy_kind_uses_footer_signal(tmp_path):
+    _write_registry(tmp_path, name="agy1", kind="agy")
+
+    def cap(target, with_ansi=False):
+        return "> do it\n⡿  Generating...\n─────\n>\n─────\nesc to cancel   Gemini 3.8 Flash · high\n"
+
+    r = ws.resolve(
+        "agy1", tmp_path,
+        session_running_fn=lambda s: True,
+        capture_fn=cap,
+        title_fn=lambda t: "MacBook-Pro.local",
+    )
+    assert r["state"] == "busy"
+    assert r["kind"] == "agy"
+
+
 # ── resolve routes grok workers to the grok detector ─────────────────────────
 def test_resolve_grok_kind_uses_title_signal(tmp_path):
     _write_registry(tmp_path, name="grk", kind="grok")

@@ -4,11 +4,11 @@
  * Unknown / empty process values return null so callers render nothing.
  */
 
-export type AgentKind = 'claude' | 'codex' | 'grok';
+export type AgentKind = 'claude' | 'codex' | 'grok' | 'agy';
 
 export interface AgentIdentity {
   kind: AgentKind;
-  letter: 'C' | 'X' | 'G';
+  letter: 'C' | 'X' | 'G' | 'A';
   label: string;
 }
 
@@ -16,11 +16,17 @@ const BY_KIND: Record<AgentKind, AgentIdentity> = {
   claude: { kind: 'claude', letter: 'C', label: 'Claude' },
   codex: { kind: 'codex', letter: 'X', label: 'Codex' },
   grok: { kind: 'grok', letter: 'G', label: 'Grok' },
+  agy: { kind: 'agy', letter: 'A', label: 'Antigravity' },
 };
 
 export function agentIdentity(process: string | null | undefined): AgentIdentity | null {
   const normalized = (process ?? '').toLowerCase().trim();
-  if (normalized === 'claude' || normalized === 'codex' || normalized === 'grok') {
+  if (
+    normalized === 'claude' ||
+    normalized === 'codex' ||
+    normalized === 'grok' ||
+    normalized === 'agy'
+  ) {
     return BY_KIND[normalized];
   }
   return null;

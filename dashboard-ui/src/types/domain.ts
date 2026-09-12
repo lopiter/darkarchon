@@ -26,7 +26,7 @@ export interface Worker {
   state: WorkerState;
   role: string;
   tmuxTarget: string;
-  /** Agent process type — 'claude' | 'codex' | 'grok' | other */
+  /** Agent process type — 'claude' | 'codex' | 'grok' | 'agy' | other */
   process: string;
   /**
    * Set when the registry's recorded agent kind is contradicted by what the

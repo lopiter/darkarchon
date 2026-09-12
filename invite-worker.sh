@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/lib/_lib.sh"
 
-# Optional --kind overrides auto-detection (claude|codex|grok). Default: auto-detect
+# Optional --kind overrides auto-detection (claude|codex|grok|agy). Default: auto-detect
 # from pane content below.
 # --force skips the duplicate-target refusal (a pane already registered in any
 # team) for the rare case where dual membership is truly intended.
@@ -42,9 +42,9 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex|grok] [--force] <name> <session:window> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex|grok|agy] [--force] <name> <session:window> [<role>]" >&2
     echo "  <name>            worker handle (sanitized; matches what dispatch.sh accepts)" >&2
-    echo "  <session:window>  tmux target of the existing Claude/codex/grok pane" >&2
+    echo "  <session:window>  tmux target of the existing Claude/codex/grok/agy pane" >&2
     echo "  <role>            free-form label (default: worker-invited)" >&2
     echo "  --kind            force agent flavor; omit to auto-detect from pane" >&2
     echo "  --force           allow a pane that is already registered in another team" >&2
@@ -54,8 +54,8 @@ NAME="$1"
 TARGET="$2"
 ROLE="${3:-worker-invited}"
 
-if [ -n "$KIND" ] && [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ] && [ "$KIND" != "grok" ]; then
-    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok)" >&2
+if [ -n "$KIND" ] && ! [[ "$KIND" =~ ^(claude|codex|grok|agy)$ ]]; then
+    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok|agy)" >&2
     exit 1
 fi
 
@@ -145,6 +145,11 @@ PANE_PROC="$(tmux display-message -p -t "$TARGET" '#{pane_current_command}' 2>/d
 DETECT_NOTE=""
 if [ -n "$KIND" ]; then
     DETECT_NOTE="forced via --kind"
+elif [ "$PANE_PROC" = "agy" ] || echo "$PANE" | grep -qE 'Antigravity CLI [0-9]|\? for shortcuts +Gemini'; then
+    # agy is a native binary, so its process name is the tell; its banner and
+    # "? for shortcuts   <model> · <effort>" footer confirm. It draws no OSC
+    # title and its "─" rule would otherwise read as a claude marker.
+    KIND=agy; DETECT_NOTE="detected agy"
 elif [[ "$PANE_PROC" == grok || "$PANE_PROC" == grok-* ]] || echo "$PANE" | grep -qE 'Grok Build|Ctrl\+\.:shortcuts'; then
     # grok is a native binary ("grok-macos-aarch64", truncated by tmux), and its
     # TUI shares the ❯ composer with Claude — so check it before the claude
@@ -212,7 +217,7 @@ echo "  kind:    $KIND ($DETECT_NOTE)"
 if [ "$DETECT_NOTE" = "unsure-default-claude" ]; then
     echo
     echo "  WARNING: couldn't detect the agent from pane content — defaulted to claude."
-    echo "  If this pane runs codex or grok, re-invite with: $0 --kind codex|grok '$NAME' '$TARGET'"
+    echo "  If this pane runs codex, grok or agy, re-invite with: $0 --kind codex|grok|agy '$NAME' '$TARGET'"
 fi
 echo
 echo "Dispatch:  $HERE/lib/dispatch.sh $NAME '<prompt>'"

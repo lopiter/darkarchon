@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { agentBadgeTitle, agentIdentity } from './agentProcess';
 
 describe('agentIdentity', () => {
-  it('maps claude / codex / grok to C / X / G', () => {
+  it('maps claude / codex / grok / agy to C / X / G / A', () => {
     expect(agentIdentity('claude')).toEqual({ kind: 'claude', letter: 'C', label: 'Claude' });
     expect(agentIdentity('codex')).toEqual({ kind: 'codex', letter: 'X', label: 'Codex' });
     expect(agentIdentity('grok')).toEqual({ kind: 'grok', letter: 'G', label: 'Grok' });
+    expect(agentIdentity('agy')).toEqual({ kind: 'agy', letter: 'A', label: 'Antigravity' });
   });
 
   it('normalizes mixed case and surrounding whitespace', () => {

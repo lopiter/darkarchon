@@ -248,6 +248,38 @@ def test_scan_panes_routes_grok_process_to_grok_detector():
     assert workers[0]["state"] == "busy"
 
 
+def test_scan_panes_routes_agy_process_to_agy_detector():
+    """agy is a native binary whose TUI draws `─` rules like claude's; the
+    process name must win so the agy detector (footer-driven) classifies it."""
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="agy", target="a:0.0", cwd="/r", window_name="w")]
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", return_value="─────\n>\n─────\nesc to cancel      Gemini 3.8 Flash · high\n"):
+            with patch("lib.tmux_scanner.capture_pane_title", return_value="MacBook-Pro.local"):
+                workers = scan_panes()
+
+    assert workers[0]["process"] == "agy"
+    assert workers[0]["state"] == "busy"
+
+
+def test_list_llm_panes_matches_agy_binary():
+    fake_output = (
+        "12345 1 1 1 @0 %0 agy   alpha:1.0 alpha-window /Users/u/repo1\n"
+        "12346 1 1 0 @1 %1 zsh   alpha:2.0 alpha-window /Users/u/repo2\n"
+    )
+    with patch("lib.tmux_scanner.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=fake_output)
+        panes = list_llm_panes()
+
+    assert [p.process for p in panes] == ["agy"]
+
+
+def test_kind_conflict_flags_a_claude_record_on_the_agy_binary():
+    assert ts.kind_conflict("claude", "agy") is True
+    assert ts.kind_conflict("agy", "agy") is False
+
+
 # ── recorded kind vs. what the pane's process name proves ────────────────────
 # The registry records an agent kind at invite/spawn time and never re-checks it.
 # Swap the agent inside an existing window and the record silently keeps the old

@@ -35,6 +35,7 @@ from lib.detectors.claude import classify_claude_state  # noqa: E402
 from lib.detectors.codex import classify_codex_state  # noqa: E402
 from lib.detectors.gemini import classify_gemini_state  # noqa: E402
 from lib.detectors.grok import classify_grok_state  # noqa: E402
+from lib.detectors.agy import classify_agy_state  # noqa: E402
 from lib.heartbeat import (  # noqa: E402
     HEARTBEAT_STALE_SEC,
     heartbeat_age_sec,
@@ -114,7 +115,8 @@ def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=captu
 
     Every kind reads the pane's OSC title (#{pane_title}) — all of them publish
     state there (codex: braille spinner / "Action Required"; gemini:
-    "✦ Working…" / "◇ Ready"; grok: braille spinner / "… - grok"; claude:
+    "✦ Working…" / "◇ Ready"; grok: braille spinner / "… - grok"; agy: none —
+    its footer ("? for shortcuts" / "esc to cancel") is the signal; claude:
     braille spinner / "✳"; live-verified 2026-08). Claude Code's title was static when this was first written and
     now toggles, so the claude detector uses it as well — but only to
     corroborate busy, since its idle glyph also covers a blocked worker.
@@ -129,6 +131,8 @@ def scrape_state(target: str, kind: str, capture_fn=capture_pane, title_fn=captu
         st = classify_gemini_state(plain, ansi, title_fn(target))
     elif kind == "grok":
         st = classify_grok_state(plain, ansi, title_fn(target))
+    elif kind == "agy":
+        st = classify_agy_state(plain, ansi, title_fn(target))
     else:
         st = classify_claude_state(plain, ansi, title_fn(target))
     out = {"state": _normalize_scrape_state(st["state"]), "detail": st.get("detail", "")}
