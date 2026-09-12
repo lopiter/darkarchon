@@ -186,7 +186,7 @@ checked_dispatch() {
             [ -n "$detail" ] && echo "  detail: $detail" >&2
             case "$kind" in
                 codex)  echo "  The codex token appears expired or not logged in. Run 'codex login' and try again." >&2 ;;
-                gemini) echo "  gemini is asking for an API key. Authenticate in the pane and try again." >&2 ;;
+                gemini) echo "  gemini is showing an auth dialog (API key / sign-in). Authenticate in the pane and try again." >&2 ;;
                 *)      echo "  The worker cannot progress until a human fixes it in the pane." >&2 ;;
             esac
             return 12 ;;

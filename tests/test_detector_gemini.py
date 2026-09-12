@@ -44,6 +44,37 @@ def test_api_key_dialog_is_error(load_fixture):
     assert result["state"] == "error"
 
 
+# ── 0.59.0 dialogs (captured live 2026-09-12) ───────────────────────────────
+def test_v059_trust_files_dialog_is_awaiting_permission(load_fixture):
+    """0.59 reworded the trust dialog; the title still says Ready."""
+    plain = load_fixture("gemini_trust_prompt_v059.txt")
+    result = classify_gemini_state(plain, plain, "◇  Ready (work)")
+    assert result["state"] == "awaiting_permission"
+    assert "trust" in result["detail"].lower()
+
+
+def test_v059_auth_method_picker_is_error(load_fixture):
+    """No login on file (or an expired Google token) opens an auth-method
+    picker instead of the key dialog — a human has to pick and sign in."""
+    plain = load_fixture("gemini_auth_select.txt")
+    result = classify_gemini_state(plain, plain, "◇  Ready (work)")
+    assert result["state"] == "error"
+
+
+def test_v059_api_key_dialog_is_error(load_fixture):
+    """The banner above the dialog says 'Authenticated with gemini-api-key' —
+    only the dialog footer may decide."""
+    plain = load_fixture("gemini_authkey_prompt_v059.txt")
+    result = classify_gemini_state(plain, plain, "◇  Ready (work)")
+    assert result["state"] == "error"
+
+
+def test_tool_confirmation_proceed_is_awaiting_permission():
+    plain = "│ Do you want to proceed?\n│ ● 1. Yes, allow once\n│   2. No, suggest changes (esc)\n"
+    result = classify_gemini_state(plain, plain, "◇  Ready (work)")
+    assert result["state"] == "awaiting_permission"
+
+
 # ── no title available: screen-only classification ──────────────────────────
 def test_no_title_esc_to_cancel_is_busy():
     plain = "✦ Generating response\n(esc to cancel)\n"

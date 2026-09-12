@@ -2,16 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { agentBadgeTitle, agentIdentity } from './agentProcess';
 
 describe('agentIdentity', () => {
-  it('maps claude / codex / grok to C / X / G', () => {
+  it('maps claude / codex / grok / gemini to C / X / G / M', () => {
     expect(agentIdentity('claude')).toEqual({ kind: 'claude', letter: 'C', label: 'Claude' });
     expect(agentIdentity('codex')).toEqual({ kind: 'codex', letter: 'X', label: 'Codex' });
     expect(agentIdentity('grok')).toEqual({ kind: 'grok', letter: 'G', label: 'Grok' });
+    expect(agentIdentity('gemini')).toEqual({ kind: 'gemini', letter: 'M', label: 'Gemini' });
   });
 
   it('normalizes mixed case and surrounding whitespace', () => {
     expect(agentIdentity(' Claude ')).toEqual({ kind: 'claude', letter: 'C', label: 'Claude' });
     expect(agentIdentity('CODEX')).toEqual({ kind: 'codex', letter: 'X', label: 'Codex' });
     expect(agentIdentity('\tGrok\n')).toEqual({ kind: 'grok', letter: 'G', label: 'Grok' });
+    expect(agentIdentity('Gemini ')).toEqual({ kind: 'gemini', letter: 'M', label: 'Gemini' });
   });
 
   it('returns null for unknown, empty, or missing process so callers draw nothing', () => {

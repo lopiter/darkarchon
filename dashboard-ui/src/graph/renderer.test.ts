@@ -27,6 +27,11 @@ describe('agentChipPaint', () => {
       fill: '#a5b4fc',
       bg: 'rgba(129,140,248,0.16)',
     });
+    expect(agentChipPaint('gemini')).toEqual({
+      letter: 'M',
+      fill: '#7dd3fc',
+      bg: 'rgba(56,189,248,0.16)',
+    });
   });
 
   it('returns null for unknown process so the renderer draws nothing', () => {

@@ -1,0 +1,22 @@
+ Gemini CLI v0.59.0
+Tips for getting started:
+1. /help for more information
+2. Ask coding questions, edit code or run commands
+3. Be specific for the best results
+ℹ Skipping project agents due to untrusted folder. To enable, ensure that the
+  project root is trusted.
+ ╭───────────────────────────────────────────────────────────────────────────╮
+ │                                                                           │
+ │ Do you trust the files in this folder?                                    │
+ │                                                                           │
+ │ Trusting a folder allows Gemini CLI to load its local configurations,     │
+ │ including custom commands, hooks, MCP servers, agent skills, and          │
+ │ settings. These configurations could execute code on your behalf or       │
+ │ change the behavior of the CLI.                                           │
+ │                                                                           │
+ │                                                                           │
+ │ ● 1. Trust folder (work)                                                  │
+ │   2. Trust parent folder (gemtest)                                        │
+ │   3. Don't trust                                                          │
+ │                                                                           │
+ ╰───────────────────────────────────────────────────────────────────────────╯

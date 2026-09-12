@@ -71,12 +71,15 @@ const PAL = {
   agentCodexBg: 'rgba(148,163,184,0.16)',
   agentGrok: '#a5b4fc',
   agentGrokBg: 'rgba(129,140,248,0.16)',
+  agentGemini: '#7dd3fc',
+  agentGeminiBg: 'rgba(56,189,248,0.16)',
 } as const;
 
 const AGENT_CHIP: Record<AgentKind, { fill: string; bg: string }> = {
   claude: { fill: PAL.agentClaude, bg: PAL.agentClaudeBg },
   codex: { fill: PAL.muted, bg: PAL.agentCodexBg },
   grok: { fill: PAL.agentGrok, bg: PAL.agentGrokBg },
+  gemini: { fill: PAL.agentGemini, bg: PAL.agentGeminiBg },
 };
 
 /** Canvas chip paint for a worker.process. Null → draw nothing.

@@ -1,6 +1,6 @@
 # darkarchon
 
-Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex) and xAI [Grok Build](https://x.ai) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex` / `grok`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
+Coordinate multiple coding-agent CLIs — [Claude Code](https://claude.com/claude-code), [OpenAI Codex](https://github.com/openai/codex), xAI [Grok Build](https://x.ai) and Google [Gemini CLI](https://geminicli.com) — across **separate tmux windows and repositories**. Each worker is an independent `claude` (or `codex` / `grok`) process with its own cwd, skills, plugins, and MCP servers. File-based message passing. Live dashboard. tmux-native.
 
 > tmux window = isolated claude process · filesystem = message bus · short trigger over the worker's inbox socket (send-keys for codex)
 
@@ -171,6 +171,30 @@ specific: Enter in a busy grok composer means "send now" and interrupts the
 turn, so `mailbox.sh` holds messages for a busy grok worker and the worker's
 `Stop` hook blocks the turn end with "you have N unread messages" until it
 drains — grok's own keep-working mechanism, no keystrokes.
+
+```bash
+# spawn a Gemini worker (needs the `gemini` CLI installed + signed in once)
+$DARKARCHON_HOME/lib/spawn-worker.sh --kind gemini reviewer ~/projects/backend review
+```
+
+Gemini workers launch as a persistent `gemini --approval-mode yolo --skip-trust`
+TUI (override via `GEMINI_FLAGS` / `GEMINI_MODEL` in `config.env`). Gemini has
+no `--append-system-prompt`, `--rules` or `--settings` flag, so
+`lib/start-worker-gemini.sh` reaches the same place through gemini's own hooks:
+it writes a per-worker settings file under `$STATE_DIR/gemini/` and hands it to
+gemini as `GEMINI_CLI_SYSTEM_SETTINGS_PATH` (merged over the platform's real
+system settings, never touching `~/.gemini/settings.json` or the repo). The
+`SessionStart` hook returns the team contract — same prompt layers as claude,
+plus `prompts/gemini.md` with the `lib/ask.sh` / `lib/mailbox.sh` substitutions —
+as `additionalContext`, and `BeforeAgent` / `AfterAgent` / `Notification` /
+`PreCompress` / `SessionEnd` feed `lib/gemini-state-hook.sh` for event-driven
+state. Typing into a busy gemini composer queues the text into the next prompt,
+so `mailbox.sh` holds messages for a busy gemini worker and the `AfterAgent`
+hook blocks the turn end with "you have N unread messages" until it drains.
+Gemini accepts `--resume <session-id>`, so `revive-worker.sh` and
+`restore-team.sh` restore a gemini worker's conversation exactly as they do for
+claude. Verified on gemini-cli 0.59.0; the 0.3.x line has neither hooks nor
+`--resume`, so upgrade first (`npm i -g @google/gemini-cli@latest`).
 
 Codex workers launch as a persistent `codex --dangerously-bypass-approvals-and-sandbox`
 TUI (no `codex exec`). The dispatch contract is the same one-line trigger; the
@@ -389,8 +413,8 @@ tmux carries short triggers only; the filesystem is the message bus.
 
 | Script | Purpose |
 |---|---|
-| `lib/spawn-worker.sh [--kind claude\|codex\|grok] <name> <cwd> [role]` | Create a new tmux window and start a Claude, Codex or Grok worker in it (default claude) |
-| `invite-worker.sh [--kind claude\|codex\|grok] <name> <session:window> [role]` | Register an existing Claude/Codex/Grok pane as a worker (no respawn; kind auto-detected) |
+| `lib/spawn-worker.sh [--kind claude\|codex\|grok\|gemini] <name> <cwd> [role]` | Create a new tmux window and start a Claude, Codex, Grok or Gemini worker in it (default claude) |
+| `invite-worker.sh [--kind claude\|codex\|grok\|gemini] <name> <session:window> [role]` | Register an existing Claude/Codex/Grok/Gemini pane as a worker (no respawn; kind auto-detected) |
 | `uninvite-worker.sh <name>` | Remove an invited worker from the registry (pane untouched) |
 | `dispatch-safe.sh [--after <ids>] <name> '<prompt>'` | Send a task, get the result. Refuses if the pane looks busy; `--after` waits for other tasks first |
 | `lib/dispatch.sh <name> '<prompt>'` | Same, without the busy-check |
@@ -418,7 +442,7 @@ tmux carries short triggers only; the filesystem is the message bus.
 | MCP tool | Legacy sh equivalent | Purpose |
 |---|---|---|
 | `mcp__darkarchon__ask(question, context, blocking=False)` | `lib/ask.sh [--blocking] "<q>"` | File a question for the orchestrator; `blocking` waits for the answer |
-| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@grok`/`@cwd:<dir>` |
+| `mcp__darkarchon__mailbox_send(to, body)` | `lib/mailbox.sh send <to> "<b>"` | Send a peer message + notify recipient. `to` may be `@all`/`@idle`/`@claude`/`@codex`/`@grok`/`@gemini`/`@cwd:<dir>` |
 | `mcp__darkarchon__mailbox_drain()` | `lib/mailbox.sh read <self>` | Read & remove own pending messages (stamps `read_at`) |
 | `mcp__darkarchon__status_get()` | (no equivalent) | Self-introspection (mailbox count, recent tasks) |
 
@@ -433,7 +457,7 @@ implementation.
 | `0` | Dispatched and completed — result on stdout |
 | `10` | Worker busy / compacting / rate-limited, or another dispatch is in flight |
 | `11` | Unsent user input on the prompt line (`--force` overrides) |
-| `12` | Worker shows an auth error (codex: run `codex login`; gemini: enter the API key) |
+| `12` | Worker shows an auth error (codex: run `codex login`; gemini: sign in / enter the API key in the pane) |
 | `13` | A same-cwd peer worker is busy (edits are serialized) |
 | `14` | Worker is blocked on a permission prompt or a question |
 | `15` | Circuit breaker: repeated failures on this worker (`--force` overrides) |

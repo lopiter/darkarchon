@@ -199,13 +199,13 @@ done
 if [ "$FRESH" -eq 0 ] && [ -z "$RESUME_ID" ]; then
     RESUME_ID="$RECORDED_ID"
 fi
-if [ "$KIND" != "claude" ] && [ -n "$RESUME_ID" ]; then
-    echo "NOTE: '$NAME' is a $KIND worker — only claude can resume a conversation." >&2
+if [ "$KIND" != "claude" ] && [ "$KIND" != "gemini" ] && [ -n "$RESUME_ID" ]; then
+    echo "NOTE: '$NAME' is a $KIND worker — only claude and gemini can resume a conversation." >&2
     echo "      Respawning fresh." >&2
     RESUME_ID=""
 fi
-if [ "$FRESH" -eq 0 ] && [ -z "$RESUME_ID" ] && [ "$KIND" = "claude" ]; then
-    echo "ERROR: no Claude session recorded for '$NAME' — nothing to resume." >&2
+if [ "$FRESH" -eq 0 ] && [ -z "$RESUME_ID" ] && { [ "$KIND" = "claude" ] || [ "$KIND" = "gemini" ]; }; then
+    echo "ERROR: no $KIND session recorded for '$NAME' — nothing to resume." >&2
     echo "  It predates the state hook, was an invited (external) worker, or its" >&2
     echo "  state file was cleared. Start it over with: $0 '$NAME' --fresh" >&2
     echo "  or name the session yourself: $0 '$NAME' --session-id <id>" >&2
@@ -271,7 +271,7 @@ SPAWN_ARGS+=("$NAME" "$CWD" "$ROLE")
 
 echo
 if [ -n "$RESUME_ID" ]; then
-    echo "Revived '$NAME' with its previous conversation (claude --resume $RESUME_ID)."
+    echo "Revived '$NAME' with its previous conversation ($KIND --resume $RESUME_ID)."
     echo "  If it was killed because its context was full, that context comes back"
     echo "  too — use --fresh instead to start clean from its handover note."
 else

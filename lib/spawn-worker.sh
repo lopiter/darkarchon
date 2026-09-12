@@ -18,8 +18,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/_lib.sh"
 
-# Optional leading --kind flag selects the agent flavor (default claude). Codex
-# and grok workers launch via start-worker-{codex,grok}.sh and use kind-specific
+# Optional leading --kind flag selects the agent flavor (default claude). Codex,
+# grok and gemini workers launch via start-worker-{codex,grok,gemini}.sh and use kind-specific
 # dispatch and busy-detection paths downstream (resolved from WORKER_<sn>_KIND
 # in the registry).
 #
@@ -37,7 +37,7 @@ source "$HERE/_lib.sh"
 # Optional --resume-session <claude-session-id> relaunches the worker with
 # `claude --resume <id>` so its previous conversation survives a reboot/kill.
 # The id is recorded by lib/state-hook.sh in $STATE_DIR/states/<safe>.json.
-# claude-kind workers only.
+# claude and gemini workers (gemini resumes with `gemini --resume <id>`).
 #
 # Optional --spawned-by <name> records who spawned this worker (registry key
 # WORKER_<sn>_SPAWNED_BY, surfaced by the dashboard as a lineage link).
@@ -75,13 +75,13 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--kind claude|codex|grok] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] [--spawned-by <name>] <name> <cwd> [<role>]" >&2
+    echo "Usage: $0 [--kind claude|codex|grok|gemini] [--env KEY=VALUE]... [--session <name>] [--resume-session <id>] [--spawned-by <name>] <name> <cwd> [<role>]" >&2
     exit 1
 fi
 
 if [ -n "$RESUME_SESSION" ]; then
-    if [ "$KIND" != "claude" ]; then
-        echo "ERROR: --resume-session is only supported for claude workers" >&2
+    if [ "$KIND" != "claude" ] && [ "$KIND" != "gemini" ]; then
+        echo "ERROR: --resume-session is only supported for claude and gemini workers" >&2
         exit 1
     fi
     if [[ ! "$RESUME_SESSION" =~ ^[a-zA-Z0-9-]+$ ]]; then
@@ -93,8 +93,8 @@ NAME="$1"
 CWD="$2"
 ROLE="${3:-worker}"
 
-if [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ] && [ "$KIND" != "grok" ]; then
-    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok)" >&2
+if [ "$KIND" != "claude" ] && [ "$KIND" != "codex" ] && [ "$KIND" != "grok" ] && [ "$KIND" != "gemini" ]; then
+    echo "ERROR: invalid --kind '$KIND' (expected: claude|codex|grok|gemini)" >&2
     exit 1
 fi
 
@@ -185,6 +185,14 @@ elif [ "$KIND" = "grok" ]; then
     else
         tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}grok ${GROK_FLAGS:---always-approve}" Enter
     fi
+elif [ "$KIND" = "gemini" ]; then
+    LAUNCHER="$HERE/start-worker-gemini.sh"
+    if [ -x "$LAUNCHER" ]; then
+        tmux send-keys -t "=$WIN_SESSION:$NAME" \
+            "${ENV_PREFIX}GEMINI_FLAGS='${GEMINI_FLAGS:-}' GEMINI_MODEL='${GEMINI_MODEL:-}' $LAUNCHER '$NAME' '$ROLE' '$TEAM_ROOT' '$STATE_DIR' '$CTX_DIR' '$RESUME_SESSION'" Enter
+    else
+        tmux send-keys -t "=$WIN_SESSION:$NAME" "${ENV_PREFIX}gemini ${GEMINI_FLAGS:---approval-mode yolo --skip-trust}" Enter
+    fi
 else
     LAUNCHER="$HERE/start-worker-claude.sh"
     if [ -x "$LAUNCHER" ]; then
@@ -258,6 +266,8 @@ if [ "$KIND" = "codex" ]; then
     echo "Wait ~10s for codex to start. Ensure 'codex login' is done (else 401)."
 elif [ "$KIND" = "grok" ]; then
     echo "Wait ~10s for grok to start. Ensure grok is logged in (~/.grok/auth.json)."
+elif [ "$KIND" = "gemini" ]; then
+    echo "Wait ~10s for gemini to start. Ensure gemini is logged in (~/.gemini/oauth_creds.json or GEMINI_API_KEY)."
 else
     echo "Wait ~15s for Claude to start. If trust prompt appears, hit Enter once."
 fi
