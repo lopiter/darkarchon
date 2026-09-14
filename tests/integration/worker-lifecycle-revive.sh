@@ -54,6 +54,17 @@ echo "$OUT" | grep -q "rename old window" && ok "plans to rename the old window,
 OUT="$("$DA/revive-worker.sh" alpha --fresh --dry-run 2>&1)"
 echo "$OUT" | grep -q "fresh — no conversation" && ok "--fresh plans a clean spawn" || no "--fresh plan wrong: $OUT"
 
+# After a reboot the whole tmux session is gone. On some tmux versions
+# `display-message -p -t =gone:alpha` exits 0 with empty output, which used to
+# read as "the old window still exists" and plan a rename of nothing.
+printf 'WORKER_alpha_NAME="alpha"\nWORKER_alpha_TARGET="%s-gone:alpha"\nWORKER_alpha_DIR="%s"\nWORKER_alpha_ROLE="backend"\nWORKER_alpha_KIND="claude"\n' \
+    "$SESS" "$WORKDIR" > "$SD/workers-runtime.env"
+hook_state ended "aaaa-1111-bbbb-2222"
+OUT="$("$DA/revive-worker.sh" alpha --dry-run 2>&1)"
+[ $? -eq 0 ] && ok "revives a worker whose session vanished (reboot)" || no "reboot case failed: $OUT"
+echo "$OUT" | grep -q "rename old window" && no "plans to rename a window that no longer exists" || ok "no rename when the session is gone"
+rm -f "$SD/workers-runtime.env"
+
 "$DA/revive-worker.sh" alpha --fresh --session-id x >/dev/null 2>&1
 [ $? -eq 1 ] && ok "--fresh with --session-id is refused" || no "contradictory flags accepted"
 

@@ -1,0 +1,26 @@
+ Gemini CLI v0.59.0
+Tips for getting started:
+1. /help for more information
+2. Ask coding questions, edit code or run commands
+3. Be specific for the best results
+╭─────────────────────────────────────────────────────────────────────────────╮
+│                                                                             │
+│ ? Get started                                                               │
+│                                                                             │
+│   How would you like to authenticate for this project?                      │
+│                                                                             │
+│   ● 1. Sign in with Google                                                  │
+│     2. Use Gemini API Key                                                   │
+│     3. Vertex AI                                                            │
+│                                                                             │
+│   Failed to sign in. Message: Authentication consent could not be obtained. │
+│   Please run Gemini CLI in an interactive terminal to authenticate, or use  │
+│   NO_BROWSER=true for manual authentication.                                │
+│                                                                             │
+│   (Use Enter to select)                                                     │
+│                                                                             │
+│   Terms of Services and Privacy Notice for Gemini CLI                       │
+│                                                                             │
+│   https://geminicli.com/docs/resources/tos-privacy/                         │
+│                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────╯

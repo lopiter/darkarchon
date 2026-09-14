@@ -3,6 +3,7 @@ import { useClipboard } from '../../hooks/useClipboard';
 import { useDashboardStore } from '../../store/dashboard';
 import type { InactiveTeam } from '../../types/domain';
 import { formatPing } from '../../utils/formatTime';
+import { restoreCommand } from '../../utils/teamRestore';
 import styles from './InactiveTeams.module.css';
 
 function size(bytes: number): string {
@@ -108,13 +109,26 @@ export function InactiveTeams() {
                     {t.registeredWorkers === 1 ? 'worker' : 'workers'}
                   </span>
                   <span className={styles.meta}>{size(t.sizeBytes)}</span>
-                  <CopyButton text={archiveCommand([t])} label="copy" />
+                  {/* A team lands here after a reboot with every registration
+                      intact and no pane behind any of them — the case
+                      restore-team.sh exists for. Nothing to revive when the
+                      registry is empty. */}
+                  {t.registeredWorkers > 0 && (
+                    <CopyButton
+                      text={restoreCommand(t.stateDir)}
+                      label="copy restore"
+                    />
+                  )}
+                  <CopyButton text={archiveCommand([t])} label="copy archive" />
                 </div>
               ))}
             </div>
           ))}
           <p className={styles.hint}>
-            run the copied command on that host — it moves the state dir to{' '}
+            run the copied command on that host. <strong>restore</strong>{' '}
+            respawns every registered worker in a new window with its
+            conversation resumed (add <code>--dry-run</code> to see the plan
+            first); <strong>archive</strong> moves the state dir to{' '}
             <code>~/.darkarchon-archive/</code>, never deletes, and refuses any
             team whose tmux session is still alive
           </p>

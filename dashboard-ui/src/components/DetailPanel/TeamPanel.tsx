@@ -17,6 +17,7 @@ import { useDashboardStore } from '../../store/dashboard';
 import type { Team, Worker } from '../../types/domain';
 import { formatPing } from '../../utils/formatTime';
 import { sortWorkersForTeam } from '../../utils/sortWorkers';
+import { restorePlan } from '../../utils/teamRestore';
 import {
   externalSessions,
   ownedSessions,
@@ -58,6 +59,10 @@ export function TeamPanelContent({
   );
   const borrowed = useMemo(() => externalSessions(workers), [workers]);
   const owned = useMemo(() => ownedSessions(workers), [workers]);
+  const restore = useMemo(
+    () => restorePlan(workers, team.stateDir),
+    [workers, team.stateDir]
+  );
   const ready = blockers.length === 0;
 
   return (
@@ -91,6 +96,9 @@ export function TeamPanelContent({
 
       <ReadinessSection blockers={blockers} />
       <RosterSection workers={workers} />
+      {restore.dead.length > 0 && (
+        <RestoreSection plan={restore} host={host} total={workers.length} />
+      )}
       <ShutdownSection
         cmds={cmds}
         host={host}
@@ -166,6 +174,58 @@ function RosterSection({ workers }: { workers: Worker[] }) {
           </button>
         ))}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Shown only while at least one worker is dead. The common cause is a reboot,
+ * which takes every pane but leaves the state dir — and with it everything
+ * restore-team.sh needs to bring the team back with its conversations.
+ */
+function RestoreSection({
+  plan,
+  host,
+  total,
+}: {
+  plan: ReturnType<typeof restorePlan>;
+  host: string;
+  total: number;
+}) {
+  const n = plan.dead.length;
+  const all = n === total;
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionLabel}>
+        Restore<span>run on {host}</span>
+      </div>
+      <span className={styles.tmuxHint}>
+        {all ? 'every worker' : `${n} of ${total} workers`} ({plan.dead.join(', ')}){' '}
+        {n === 1 ? 'has' : 'have'} no pane — a reboot, or a killed session.
+        This respawns each one in a new window with its conversation resumed
+        (<code>claude --resume</code>); live workers are left alone.
+      </span>
+
+      {plan.command ? (
+        <>
+          <CommandBlock
+            label="revive dead workers"
+            command={plan.command}
+            note="the old windows are never killed; one that still exists is renamed aside"
+            warn={
+              plan.fresh.length > 0
+                ? `${plan.fresh.join(', ')} ${plan.fresh.length === 1 ? 'starts' : 'start'} fresh — no conversation was recorded (invited or non-claude)`
+                : null
+            }
+          />
+          <CopyRow label="copy a dry run (prints the plan, changes nothing)" command={plan.dryRun!} />
+        </>
+      ) : (
+        <span className={styles.tmuxHint}>
+          the hub reported no state dir for this team, so restore-team.sh
+          cannot be addressed to it
+        </span>
+      )}
     </section>
   );
 }

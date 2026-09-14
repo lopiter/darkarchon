@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from lib.detectors.claude import classify_claude_state
 from lib.detectors.codex import classify_codex_state
+from lib.detectors.gemini import classify_gemini_state
 from lib.detectors.grok import classify_grok_state
 
 # Some LLM CLIs (notably Claude Code on macOS) appear in tmux's pane_current_command
@@ -25,6 +26,16 @@ _CODEX_CANDIDATE_PROCS = {"codex"}
 # tmux truncates pane_current_command to 15 chars ("grok-macos-aarc"), so match
 # by prefix. Plain "grok" covers a symlinked/renamed install.
 _GROK_PROC_PREFIX = "grok"
+# gemini TUI tells. gemini runs on node (pane_current_command is the runtime's
+# version string, same as claude), so a pane is only recognized by what it draws:
+# the OSC title it publishes ("◇  Ready (<dir>)" ↔ "✦  Working… (<dir>)",
+# live-verified 0.3.x–0.59.0) or its own banner / composer placeholder.
+_GEMINI_TITLE_RE = re.compile(r"^(?:◇\s+Ready|✦\s+Working)")
+_GEMINI_MARKERS = (
+    "Gemini CLI v",
+    "Type your message or @path/to/file",
+    "GEMINI.md",
+)
 # codex TUI substrings. Spans versions: 0.34 showed a footer
 # ("⏎ send  ⌃J newline  ⌃T transcript"); 0.135 dropped the footer and shows an
 # "OpenAI Codex (vX)" banner + "Working (Ns • esc to interrupt)" while busy.
@@ -94,6 +105,12 @@ def kind_conflict(registered_kind: str, process: str) -> bool:
     return registered_kind not in allowed
 
 
+def _has_gemini_marker(plain: str, title: str) -> bool:
+    if title and _GEMINI_TITLE_RE.match(title.strip()):
+        return True
+    return any(m in plain for m in _GEMINI_MARKERS)
+
+
 def _has_codex_marker(plain: str) -> bool:
     lower = plain.lower()
     # Strong standalone signals (busy line / banner) — present in any one suffices.
@@ -153,7 +170,7 @@ def _run_tmux(args: list[str], timeout: float = 5.0) -> tuple[int, str]:
 
 
 def list_llm_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok", "gemini"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[PaneInfo]:
@@ -270,7 +287,7 @@ def capture_pane(target: str, with_ansi: bool = False) -> str:
 
 
 def scan_panes(
-    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok"),
+    allowed_processes: tuple[str, ...] = ("claude", "codex", "grok", "gemini"),
     window_names: tuple[str, ...] = ("claude",),
     known_kinds: dict[str, str] | None = None,
 ) -> list[dict]:
@@ -326,6 +343,9 @@ def scan_panes(
         if registered_kind == "grok":
             state = classify_grok_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "grok"
+        elif registered_kind == "gemini":
+            state = classify_gemini_state(plain, ansi, capture_pane_title(p.target))
+            effective_process = "gemini"
         elif registered_kind == "codex":
             state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
             effective_process = "codex"
@@ -345,11 +365,15 @@ def scan_panes(
             effective_process = "codex"
         elif explicit:
             # User-marked window — trust the intent, route by which TUI is present.
-            # Check codex first: its box-drawing `─` also satisfies has_claude_marker,
-            # so a claude-first check would misroute codex panes.
+            # Check codex and gemini first: their box-drawing `─` also satisfies
+            # has_claude_marker, so a claude-first check would misroute them.
+            title = capture_pane_title(p.target)
             if has_codex_marker:
-                state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
+                state = classify_codex_state(plain, ansi, title)
                 effective_process = "codex"
+            elif _has_gemini_marker(plain, title):
+                state = classify_gemini_state(plain, ansi, title)
+                effective_process = "gemini"
             elif has_claude_marker:
                 state = classify_claude_state(plain, ansi)
                 effective_process = "claude"
@@ -359,10 +383,15 @@ def scan_panes(
                 effective_process = p.window_name
         elif claude_proc:
             # Auto-discovered by process name — require a marker to avoid false
-            # positives on unrelated node panes. Codex-first for the same `─` reason.
+            # positives on unrelated node panes. Codex/gemini first for the same
+            # `─` reason (gemini is node too, so it lands in this branch).
+            title = capture_pane_title(p.target)
             if has_codex_marker:
-                state = classify_codex_state(plain, ansi, capture_pane_title(p.target))
+                state = classify_codex_state(plain, ansi, title)
                 effective_process = "codex"
+            elif _has_gemini_marker(plain, title):
+                state = classify_gemini_state(plain, ansi, title)
+                effective_process = "gemini"
             elif has_claude_marker:
                 state = classify_claude_state(plain, ansi)
                 effective_process = "claude"

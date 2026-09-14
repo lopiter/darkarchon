@@ -11,6 +11,7 @@
 import type { MouseEvent } from 'react';
 import { useDashboardStore } from '../../store/dashboard';
 import type { Team, Worker } from '../../types/domain';
+import { restorePlan } from '../../utils/teamRestore';
 import { shutdownBlockers, teamCommands } from '../../utils/teamShutdown';
 import { openContextMenu, type MenuItem } from './ContextMenu';
 
@@ -53,11 +54,24 @@ export function teamMenuItems(host: string, team: Team): MenuItem[] {
   const cmds = teamCommands(team.workers, team.stateDir);
   const blockers = shutdownBlockers(team.workers);
   const busy = blockers.length > 0;
+  const restore = restorePlan(team.workers, team.stateDir);
+  const dead = restore.dead.length;
 
   return [
     {
       label: 'Open team panel',
       onSelect: () => useDashboardStore.getState().selectTeam(host, team.name),
+    },
+    {
+      label: 'Copy restore command',
+      hint:
+        dead === 0
+          ? 'no dead workers'
+          : restore.command
+            ? `revive ${dead} dead ${dead === 1 ? 'worker' : 'workers'} — restore-team.sh`
+            : 'no state dir for this team',
+      disabled: dead === 0 || !restore.command,
+      copy: restore.command ?? '',
     },
     {
       label: 'Copy stop-session command',

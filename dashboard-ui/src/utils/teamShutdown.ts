@@ -119,7 +119,7 @@ export function externalSessions(workers: Worker[]): string[] {
 
 /** Single-quote for a POSIX shell — state dirs and session names are paths
  *  and user-chosen strings, and both can carry spaces. */
-function q(s: string): string {
+export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -152,15 +152,15 @@ export function teamCommands(
   stateDir: string | undefined
 ): TeamCommands {
   const sessions = ownedSessions(workers);
-  const stop = sessions.map((s) => `tmux kill-session -t ${q(s)}`).join('\n');
+  const stop = sessions.map((s) => `tmux kill-session -t ${shellQuote(s)}`).join('\n');
   const prune = stateDir
-    ? `EE_STATE_DIR=${q(stateDir)} "$DARKARCHON_HOME/prune-workers.sh" --yes`
+    ? `EE_STATE_DIR=${shellQuote(stateDir)} "$DARKARCHON_HOME/prune-workers.sh" --yes`
     : null;
   // No --yes: archive prints what it will move and asks. That prompt is the
   // last checkpoint before a state dir leaves its place, and it costs one
   // keystroke.
   const archive = stateDir
-    ? `"$DARKARCHON_HOME/lib/teams.sh" archive ${q(stateDir)}`
+    ? `"$DARKARCHON_HOME/lib/teams.sh" archive ${shellQuote(stateDir)}`
     : null;
 
   const lines: string[] = [];

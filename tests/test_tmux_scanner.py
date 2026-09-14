@@ -248,6 +248,37 @@ def test_scan_panes_routes_grok_process_to_grok_detector():
     assert workers[0]["state"] == "busy"
 
 
+def test_scan_panes_routes_registered_gemini_worker_to_gemini_detector():
+    """A registered gemini worker runs on node like claude; the registry must
+    win so it is classified by the gemini detector (title-driven)."""
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="2.1.263", target="g:0.0", cwd="/r", window_name="gem", window_id="@7")]
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", return_value="─────\n >   Type your message or @path/to/file\n"):
+            with patch("lib.tmux_scanner.capture_pane_title", return_value="✦  Working… (r)"):
+                workers = scan_panes(known_kinds={"@7": "gemini"})
+
+    assert workers[0]["process"] == "gemini"
+    assert workers[0]["state"] == "busy"
+
+
+def test_scan_panes_discovers_unregistered_gemini_pane_by_title():
+    """An unregistered gemini pane looks like a claude candidate (node runtime,
+    `─` separator). Its OSC title is the tell, and must be checked before the
+    claude marker."""
+    from lib.tmux_scanner import PaneInfo
+
+    panes = [PaneInfo(pid="1", process="node", target="g:1.0", cwd="/r", window_name="w")]
+    with patch("lib.tmux_scanner.list_llm_panes", return_value=panes):
+        with patch("lib.tmux_scanner.capture_pane", return_value="─────\n >   Type your message or @path/to/file\n"):
+            with patch("lib.tmux_scanner.capture_pane_title", return_value="◇  Ready (r)"):
+                workers = scan_panes()
+
+    assert workers[0]["process"] == "gemini"
+    assert workers[0]["state"] == "idle"
+
+
 # ── recorded kind vs. what the pane's process name proves ────────────────────
 # The registry records an agent kind at invite/spawn time and never re-checks it.
 # Swap the agent inside an existing window and the record silently keeps the old

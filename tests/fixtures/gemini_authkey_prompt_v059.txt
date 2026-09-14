@@ -1,0 +1,22 @@
+   ▝▜▄
+  ▗▟▀    Authenticated with gemini-api-key /auth
+ ▝▀
+Tips for getting started:
+1. /help for more information
+2. Ask coding questions, edit code or run commands
+3. Be specific for the best results
+╭─────────────────────────────────────────────────────────────────────────────╮
+│                                                                             │
+│ Enter Gemini API Key                                                        │
+│                                                                             │
+│ Please enter your Gemini API key. It will be securely stored in your system │
+│ keychain.                                                                   │
+│ You can get an API key from https://aistudio.google.com/app/apikey          │
+│                                                                             │
+│ ╭─────────────────────────────────────────────────────────────────────────╮ │
+│ │ Paste your API key here                                                 │ │
+│ ╰─────────────────────────────────────────────────────────────────────────╯ │
+│                                                                             │
+│ (Press Enter to submit, Esc to cancel, Ctrl+C to clear stored key)          │
+│                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────╯
