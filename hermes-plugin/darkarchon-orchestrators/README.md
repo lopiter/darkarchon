@@ -14,8 +14,9 @@ Hermes (fleet manager)
 ```
 
 Each employee owns a **dedicated tmux session named after it** (spawned via
-`spawn-worker.sh --session`); its sub-workers join that same session. The
-fleet's registry/state stay together under `~/.darkarchon/<fleet-team>/`.
+`spawn-worker.sh --session`); its sub-workers join that same session. Every
+employee belongs to a **team** — a plain darkarchon namespace — and that
+team's registry/state stay together under `~/.darkarchon/<team>/`.
 `kill` tears down the whole employee session (employee + workers) and its
 sub-team registry, keeping task history.
 
@@ -27,8 +28,11 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 ## What it registers
 
 - **`orchestrator` tool** (toolset `orchestrator`) — actions:
-  `set_fleet` (alias `set_team`), `spawn`, `invite`, `uninvite`, `dispatch`, `result`, `status`,
+  `teams`, `set_team` (alias `set_fleet`), `spawn`, `invite`, `uninvite`,
+  `dispatch`, `result`, `status`,
   `list`, `runs`, `questions`, `answer`, `interrupt`, `kill`.
+  `spawn`/`invite` REFUSE without `team=` — the model must ask the user which
+  team the new employee joins (an unknown name creates it).
   `invite` adopts an already-running Claude session (`session:window`) as an
   EXTERNAL employee: dispatchable, but state is scrape-detected (no hooks),
   no orchestrator contract prompt, and it can never be killed by the manager
@@ -45,8 +49,9 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
   `questions`/`answer` surface questions orchestrators escalate via `ask`
   (their only upward channel) and deliver the user's decision back by
   mailbox.
-- **`/orch` slash command** — fleet overview (`list`, `runs`, `questions`) +
-  `team [<name>]`.
+- **`/orch` slash command** — staff overview (`list` grouped by team, `runs`,
+  `questions`) + `team [<name>]` (teams and their rosters; with a name, makes
+  it the default).
 - **`/to <employee> <task>`** — deterministic quick dispatch: no LLM
   interpretation, immediate state pre-check (busy/dead/awaiting refused with
   a clear message), fire-and-notify (completion arrives via the watcher).
@@ -58,17 +63,23 @@ result file (`dispatch-safe.sh` handles busy-checks, locking, nudge/timeout).
 
 ## Employee model
 
-- **The fleet session name is not preset.** On first use the agent asks the
-  user what to call it (`set_fleet`, persisted in
-  `~/.hermes/darkarchon-orchestrators.json`; `HERMES_ORCH_TEAM` env overrides).
-  There is exactly ONE active fleet namespace; `set_fleet` refuses to switch
-  away from a fleet that still has registered employees (they would keep
-  running in tmux but vanish from `list`/`dispatch`) unless `force=true`.
-- **Employee teams are labels, not namespaces.** "aaa를 bbb팀으로 채용" maps
-  to `spawn(name=aaa, team=bbb)` — a group label stored in the plugin-owned
-  `<state>/employee-groups.json`, shown grouped in `list`/`/orch`. `invite`
-  takes the same `team` label; `kill`/`uninvite` clear it. Labels never touch
-  darkarchon core or the fleet namespace.
+- **Every hire names its team, and the user names it.** `spawn`/`invite`
+  return an error telling the model to ask when `team=` is missing — no team
+  is ever invented. "aaa를 bbb팀으로 채용" maps to `spawn(name=aaa,
+  team=bbb)`; an unknown name creates the team on the spot.
+- **A team IS a darkarchon namespace**, identical to one the user makes by
+  hand with `DARKARCHON_TEAM=<team>`: registry, state, questions and run
+  records all live in `~/.darkarchon/<team>/`. Teams hermes has hired into
+  are remembered in `~/.hermes/darkarchon-orchestrators.json`
+  (`{"team": <latest>, "teams": [...]}`); `HERMES_ORCH_TEAM` pins one team
+  for a process.
+- **Several teams coexist and nothing hides.** `list`, `status`, `dispatch`,
+  `kill`, `runs`, `questions` and the watchers span every known team, and
+  employee names resolve across all of them — you never have to say which
+  team an employee is in. Names are therefore unique fleet-wide: hiring a
+  name already used in another team is refused.
+- `set_team` only creates a team / changes which one is the default for
+  bookkeeping; it hides nothing, so it needs no confirmation.
 - **Each orchestrator is a long-lived employee.** `spawn` takes an optional
   `brief` — a job charter (who they are, what they own, standards) written to
   `~/.darkarchon/<team>/context/<name>/orchestrator.md` and layered into the
@@ -114,7 +125,7 @@ Restart Hermes to load it.
 | Variable                    | Default            | Meaning                                          |
 |-----------------------------|--------------------|--------------------------------------------------|
 | `DARKARCHON_HOME`           | `~/work/darkarchon`| darkarchon checkout to shell out to              |
-| `HERMES_ORCH_TEAM`          | (asked at first use)| fleet name override → `~/.darkarchon/<team>`    |
+| `HERMES_ORCH_TEAM`          | (asked at each hire)| pins this process to one team → `~/.darkarchon/<team>` |
 | `HERMES_ORCH_SLACK_WEBHOOK` | (unset = disabled) | Slack incoming-webhook URL; mirrors completion/failure reports and new employee questions to Slack. Set it in `~/.hermes/.env` so the background gateway sees it too (see below). |
 
 ## Slack gateway (two-way, optional)
@@ -151,12 +162,12 @@ notification marker first (often the gateway) would silently drop the send.
 Restart Hermes (and `hermes gateway restart`) after setting it. You then
 get `:white_check_mark:/:x:` messages when dispatch runs finish and
 `:question:` messages the moment an employee escalates a decision — the
-question watcher polls the fleet queue every 15s and notifies each question
+question watcher polls every team's queue every 15s and notifies each question
 exactly once, even when several hermes processes (CLI session + messaging
 gateway) share one HERMES_HOME: the right to notify is claimed via an
 atomic filesystem marker under `<state>/notified-questions/`. Slack
 delivery is best-effort and never blocks fleet operation; messages are
-prefixed with the fleet name so machines sharing a channel stay
+prefixed with the team name so teams (and machines) sharing a channel stay
 distinguishable.
 
 **Direct-work notifications**: when you attach to a spawned employee's pane
@@ -171,9 +182,9 @@ covered — only spawned ones.
 
 ## How the namespacing works
 
-- Fleet-level calls run with `DARKARCHON_TEAM=$HERMES_ORCH_TEAM`, so
-  orchestrator windows live in the tmux session named after the manager team
-  and the registry/state in `~/.darkarchon/<manager-team>/`.
+- Team-level calls run with `DARKARCHON_TEAM=<the employee's team>`, so the
+  registry/state land in `~/.darkarchon/<team>/`. The team is chosen by the
+  user at hire time and looked up from the registry for every later call.
 - Each orchestrator is spawned with `spawn-worker.sh --env
   DARKARCHON_TEAM=<name> <name> <cwd> orchestrator`, so darkarchon commands *it*
   runs operate on its own private team — no collisions between orchestrators or

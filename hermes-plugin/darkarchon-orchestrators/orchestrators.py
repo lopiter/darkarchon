@@ -9,10 +9,14 @@ its own darkarchon worker team, namespaced by DARKARCHON_TEAM=<its name>.
 Everything here shells out to the battle-tested darkarchon scripts — this
 module adds only fleet-level bookkeeping:
 
-- manager namespace: all fleet-level darkarchon calls run with
-  DARKARCHON_TEAM=$HERMES_ORCH_TEAM (default "hermes"), so orchestrator
-  windows live in tmux session "hermes" and registry/state in
-  ~/.darkarchon/hermes/.
+- teams: an employee is hired INTO a named darkarchon team, asked from the
+  user at hire time (spawn/invite refuse without one). The team IS the
+  darkarchon namespace — its registry and state live in ~/.darkarchon/<team>/,
+  exactly like a team the user creates by hand with DARKARCHON_TEAM=<team>.
+  Several teams coexist; the known ones are remembered in
+  ~/.hermes/darkarchon-orchestrators.json and every read-side action (list,
+  status, dispatch, runs, questions) spans all of them, so no roster ever
+  goes invisible. HERMES_ORCH_TEAM still pins one team for a process.
 - dispatch runs: dispatch-safe.sh blocks until the orchestrator finishes,
   which can be minutes to hours — far beyond a sane foreground tool budget.
   So dispatch() launches it as a detached subprocess, records a run under
@@ -74,114 +78,124 @@ def _team_state_file() -> Path:
             / "darkarchon-orchestrators.json")
 
 
-def manager_team() -> Optional[str]:
-    """Fleet team name = tmux session for orchestrators + state dir key.
-
-    Resolution: HERMES_ORCH_TEAM env (explicit override) > the name the user
-    chose at first use (persisted by set_fleet). No default — the user names
-    their fleet; callers get an actionable error until then.
-    """
-    env = os.environ.get("HERMES_ORCH_TEAM")
-    if env:
-        return env
+def _load_team_state() -> Dict[str, Any]:
     try:
-        team = json.loads(_team_state_file().read_text()).get("team")
-        return team if team else None
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-_NO_TEAM = (
-    "No fleet name is set yet. STOP — do NOT call set_fleet in this turn, and "
-    "do NOT make up a name. End your turn by ASKING THE USER what to name the "
-    "fleet (it namespaces state under ~/.darkarchon/<name>/). Call "
-    "action=set_fleet only in a later turn, with the name the user typed."
-)
-
-
-def set_fleet(team: str, force: bool = False) -> Dict[str, Any]:
-    team = (team or "").strip()
-    if not team or not NAME_RE.match(team):
-        return _err(f"invalid team name '{team}' (use [a-zA-Z0-9_-])")
-    current = manager_team()
-    if current and current != team and not force:
-        # Switching the fleet namespace hides every currently-registered
-        # employee from list/dispatch (they keep running in tmux, invisibly).
-        # Historically "hire X into team Y" got misread as set_team(Y) and
-        # orphaned whole rosters — refuse and steer to the group label.
-        names = _registry_names()
-        if names:
-            return _err(
-                f"fleet '{current}' still has {len(names)} employee(s) "
-                f"registered: {', '.join(names)}. Switching the fleet to "
-                f"'{team}' would make them invisible to list/dispatch (they "
-                f"keep running in tmux). If the user meant to hire into a "
-                f"TEAM/GROUP named '{team}', that is NOT this action — use "
-                f"spawn with team='{team}' (a label inside the current "
-                f"fleet). Only pass force=true if the user explicitly wants "
-                f"to abandon the current fleet."
-            )
-    f = _team_state_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"team": team}))
-    return {"ok": True, "team": team,
-            "note": f"Fleet name set. Registry and state live in "
-                    f"~/.darkarchon/{team}/; each employee gets its own tmux "
-                    f"session named after it."}
-
-
-# Deprecated alias — "team" used to mean the fleet namespace, which collided
-# with employee team labels (spawn's team=). Kept for old callers/tests.
-set_team = set_fleet
-
-
-def state_dir() -> Path:
-    prefix = os.environ.get("TOOL_PREFIX", "darkarchon")
-    return Path.home() / f".{prefix}" / str(manager_team())
-
-
-def runs_dir() -> Path:
-    d = state_dir() / "hermes-runs"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-# ── employee groups ("X팀" labels inside ONE fleet namespace) ──────────────
-# The fleet namespace (manager_team) is global and singular; user-visible
-# "teams" of employees are just labels on registry entries. Plugin-owned
-# file — darkarchon core knows nothing about it.
-
-def _groups_file() -> Path:
-    return state_dir() / "employee-groups.json"
-
-
-def _load_groups() -> Dict[str, str]:
-    try:
-        d = json.loads(_groups_file().read_text())
-        return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+        d = json.loads(_team_state_file().read_text())
+        return d if isinstance(d, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
 
 
-def _set_group(name: str, group: str) -> None:
-    g = _load_groups()
-    if group:
-        g[name] = group
-    else:
-        g.pop(name, None)
-    f = _groups_file()
+def _save_team_state(state: Dict[str, Any]) -> None:
+    f = _team_state_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(g, ensure_ascii=False, indent=1))
+    tmp.write_text(json.dumps(state, ensure_ascii=False))
     tmp.replace(f)
 
 
-def _env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    """Env for fleet-level darkarchon calls: manager team namespace."""
+def current_team() -> Optional[str]:
+    """The team new work defaults to: HERMES_ORCH_TEAM env (pins a process to
+    one team) > the team of the most recent hire. None before the first hire —
+    which is fine, because hires always name their team explicitly."""
+    env = os.environ.get("HERMES_ORCH_TEAM")
+    if env:
+        return env
+    team = _load_team_state().get("team")
+    return str(team) if team else None
+
+
+# Legacy name from when there was exactly one fleet namespace. Kept so old
+# callers (and the /orch command) keep working.
+manager_team = current_team
+
+
+def known_teams() -> List[str]:
+    """Every team hermes has hired into (plus any env-pinned one). These are
+    plain darkarchon teams — identical to ones the user makes by hand."""
+    st = _load_team_state()
+    teams = {str(t) for t in (st.get("teams") or []) if t}
+    for t in (st.get("team"), os.environ.get("HERMES_ORCH_TEAM")):
+        if t:
+            teams.add(str(t))
+    return sorted(teams)
+
+
+def remember_team(team: str, make_current: bool = True) -> None:
+    st = _load_team_state()
+    # Seed from known_teams(), not st["teams"] — a state file written before
+    # teams existed carries its only team in "team", and rebuilding the list
+    # from the (absent) "teams" key would drop that team and hide its roster.
+    st["teams"] = sorted(set(known_teams()) | {team})
+    if make_current:
+        st["team"] = team
+    _save_team_state(st)
+
+
+def _ask_team(action: str) -> str:
+    """Error text for a hire with no team named. Hiring must never invent a
+    team: the name decides which ~/.darkarchon/<team>/ the employee lands in,
+    and the user is the one who knows how they want their staff split."""
+    existing = known_teams()
+    roster = (f"Existing teams: {', '.join(existing)}. "
+              if existing else "There are no teams yet. ")
+    return (
+        f"No team named for this hire. STOP — do NOT retry {action} with a "
+        f"team you made up. End your turn by ASKING THE USER which team this "
+        f"employee joins (an existing one, or a new name they choose). "
+        f"{roster}The team is a real darkarchon namespace: registry and state "
+        f"live in ~/.darkarchon/<team>/. Call {action} again in a later turn "
+        f"with team=<what the user typed>."
+    )
+
+
+def set_team(team: str, force: bool = False) -> Dict[str, Any]:
+    """Create a team (or switch the default to an existing one). Rarely
+    needed: hiring with team=<name> creates it on the spot. Nothing is
+    hidden by switching — every other team stays visible to list/dispatch."""
+    team = (team or "").strip()
+    if not team or not NAME_RE.match(team):
+        return _err(f"invalid team name '{team}' (use [a-zA-Z0-9_-])")
+    existed = team in known_teams()
+    remember_team(team)
+    return {"ok": True, "team": team, "teams": known_teams(),
+            "note": (f"Default team is now '{team}' "
+                     f"({'existing' if existed else 'new'}); registry and "
+                     f"state live in ~/.darkarchon/{team}/. Employees in "
+                     f"other teams remain visible and dispatchable.")}
+
+
+# Deprecated alias — the fleet used to be a single global namespace.
+set_fleet = set_team
+
+
+def teams() -> Dict[str, Any]:
+    """All teams with their rosters."""
+    out = []
+    for t in known_teams():
+        out.append({"team": t, "employees": _registry_names(t),
+                    "current": t == current_team()})
+    return {"ok": True, "team": current_team(), "teams": out}
+
+
+def state_dir(team: Optional[str] = None) -> Path:
+    prefix = os.environ.get("TOOL_PREFIX", "darkarchon")
+    return Path.home() / f".{prefix}" / str(team or current_team())
+
+
+def runs_dir(team: Optional[str] = None) -> Path:
+    d = state_dir(team) / "hermes-runs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _env(extra: Optional[Dict[str, str]] = None,
+         team: Optional[str] = None) -> Dict[str, str]:
+    """Env for team-level darkarchon calls: the target team's namespace."""
     env = dict(os.environ)
-    env["DARKARCHON_TEAM"] = str(manager_team())
+    env["DARKARCHON_TEAM"] = str(team or current_team())
     # Hermes itself is not a darkarchon worker — make sure no inherited worker
-    # identity can shadow the manager namespace in the python resolvers.
+    # identity can shadow the team namespace in the python resolvers.
     env.pop("EE_STATE_DIR", None)
     env.pop("STATE_DIR", None)
     if extra:
@@ -190,10 +204,11 @@ def _env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
 
 
 def _run(cmd: List[str], timeout: int = 60,
-         extra_env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+         extra_env: Optional[Dict[str, str]] = None,
+         team: Optional[str] = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout,
-        env=_env(extra_env), cwd=str(darkarchon_home()),
+        env=_env(extra_env, team), cwd=str(darkarchon_home()),
     )
 
 
@@ -210,9 +225,9 @@ def _safe_name(name: str) -> str:
     return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
 
 
-def _recorded_session_id(name: str) -> str:
+def _recorded_session_id(name: str, team: Optional[str] = None) -> str:
     """Last Claude session id the state hook recorded for this employee."""
-    f = state_dir() / "states" / f"{_safe_name(name)}.json"
+    f = state_dir(team) / "states" / f"{_safe_name(name)}.json"
     try:
         return str(json.loads(f.read_text()).get("session_id") or "")
     except (OSError, json.JSONDecodeError):
@@ -271,15 +286,24 @@ def _latest_session_for_cwd(cwd: str) -> str:
 def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
           session_id: str = "", continue_work: bool = False,
           team: str = "") -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid orchestrator name '{name}' (use [a-zA-Z0-9_-])")
-    if name == manager_team():
-        return _err(f"name '{name}' collides with the manager team namespace")
     team = (team or "").strip()
-    if team and not NAME_RE.match(team):
-        return _err(f"invalid team label '{team}' (use [a-zA-Z0-9_-])")
+    if not team:
+        return _err(_ask_team("spawn"))
+    if not NAME_RE.match(team):
+        return _err(f"invalid team name '{team}' (use [a-zA-Z0-9_-])")
+    if name == team:
+        return _err(f"employee name '{name}' collides with its team namespace")
+    # Names are resolved across every team, so the same one cannot live twice.
+    other = _team_of(name)
+    if other and other != team:
+        return _err(
+            f"'{name}' is already registered in team '{other}'. Employee "
+            f"names are unique across teams (dispatch/status resolve by name "
+            f"alone). Use team='{other}' for that employee, or pick another "
+            f"name for a new hire."
+        )
     workdir = Path(cwd).expanduser()
     if not workdir.is_dir():
         return _err(f"cwd not found: {workdir}")
@@ -299,7 +323,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
         # session) into a NEW employee that continues it.
         if not SESSION_ID_RE.match(session_id):
             return _err(f"invalid session_id '{session_id}'")
-        if name in _registry_names():
+        if name in _registry_names(team):
             return _err(
                 f"'{name}' is already registered — session_id is for hiring a "
                 f"NEW employee onto an existing conversation. Use resume=true "
@@ -317,7 +341,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
             )
         resume_id = session_id
     elif resume:
-        resume_id = _recorded_session_id(name)
+        resume_id = _recorded_session_id(name, team)
         if not resume_id:
             return _err(
                 f"no recorded Claude session for '{name}' — it was never "
@@ -328,7 +352,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
         # the dead registration (and its leftover session + sub-team registry,
         # same as a lay-off) so the respawn isn't refused as a duplicate. A
         # LIVE employee is never touched — resume only replaces the dead.
-        if name in _registry_names():
+        if name in _registry_names(team):
             st = status(name)
             if st.get("state") != "dead":
                 return _err(
@@ -345,7 +369,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
     # would splice windows into an unrelated pre-existing session.
     probe = subprocess.run(["tmux", "has-session", "-t", f"={name}"],
                            capture_output=True, text=True)
-    if probe.returncode == 0 and name not in _registry_names():
+    if probe.returncode == 0 and name not in _registry_names(team):
         return _err(
             f"a tmux session named '{name}' already exists and is not one of "
             f"ours — pick a different employee name"
@@ -358,7 +382,7 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
     # would be clobbered when _lib.sh sources config.env).
     extra_env = {}
     if brief and brief.strip():
-        ctx_dir = state_dir() / "context" / name
+        ctx_dir = state_dir(team) / "context" / name
         ctx_dir.mkdir(parents=True, exist_ok=True)
         (ctx_dir / "orchestrator.md").write_text(
             "## Your Charter (assigned by your manager at hire time)\n\n"
@@ -376,25 +400,26 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
     # Lineage for the dashboard graph: hermes is usually not a spawned worker
     # itself (no EE_WORKER_NAME), so spawn-worker.sh's automatic default would
     # record nothing — pass the manager identity explicitly.
-    spawner = os.environ.get("EE_WORKER_NAME") or str(manager_team() or "")
+    spawner = os.environ.get("EE_WORKER_NAME") or team
     if spawner:
         args += ["--spawned-by", spawner]
     args += [name, str(workdir), "orchestrator"]
-    proc = _run(args, timeout=30, extra_env=extra_env)
+    proc = _run(args, timeout=30, extra_env=extra_env, team=team)
     if proc.returncode != 0:
         return _err("spawn failed", detail=(proc.stderr or proc.stdout).strip())
-    _set_group(name, team)
+    remember_team(team)
     return {
         "ok": True,
         "orchestrator": name,
-        "team": team or None,
+        "team": team,
         "tmux_target": f"{name}:{name}",
         "tmux_session": name,
         "cwd": str(workdir),
         "resumed": bool(resume_id),
         "continued_session": session_id or None,
         "note": (
-            (f"Hired onto existing Claude session {session_id} — it continues "
+            f"Hired into team '{team}' (~/.darkarchon/{team}/). "
+            + (f"Hired onto existing Claude session {session_id} — it continues "
              f"that conversation. " if session_id else
              "Re-hired with its previous conversation restored (claude "
              "--resume). Its own sub-workers were reset — it may need to "
@@ -407,12 +432,14 @@ def spawn(name: str, cwd: str, brief: str = "", resume: bool = False,
 
 
 def kill(name: str) -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid orchestrator name '{name}'")
+    team = _team_of(name)
+    if team is None:
+        return _err(f"unknown employee '{name}' in any team "
+                    f"({', '.join(known_teams()) or 'none'})")
     script = darkarchon_home() / "lib" / "kill-worker.sh"
-    proc = _run([str(script), name], timeout=30)
+    proc = _run([str(script), name], timeout=30, team=team)
     if proc.returncode != 0:
         return _err("kill failed", detail=(proc.stderr or proc.stdout).strip())
     # The employee owned a whole session (itself + its worker windows) and a
@@ -426,8 +453,7 @@ def kill(name: str) -> Dict[str, Any]:
         reg.unlink()
     except OSError:
         pass
-    _set_group(name, "")
-    return {"ok": True, "orchestrator": name,
+    return {"ok": True, "orchestrator": name, "team": team,
             "message": proc.stdout.strip(),
             "note": f"tmux session '{name}' (employee + its workers) removed."}
 
@@ -435,29 +461,29 @@ def kill(name: str) -> Dict[str, Any]:
 # ── state / list ───────────────────────────────────────────────────────────
 
 def status(name: str) -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
-    resolved, cands = _resolve_name(name)
+    resolved, team, cands = _resolve_name(name)
     if resolved is None and cands:
         return _err(f"ambiguous employee '{name}' — matches: {', '.join(cands)}")
     if resolved:
         name = resolved
     script = darkarchon_home() / "lib" / "worker_state.py"
-    proc = _run(["python3", str(script), name, "--json"], timeout=30)
+    proc = _run(["python3", str(script), name, "--json"], timeout=30, team=team)
     if proc.returncode != 0:
         return _err("state resolution failed",
                     detail=(proc.stderr or proc.stdout).strip())
     try:
-        return {"ok": True, "orchestrator": name, **json.loads(proc.stdout)}
+        return {"ok": True, "orchestrator": name, "team": team,
+                **json.loads(proc.stdout)}
     except json.JSONDecodeError:
-        return {"ok": True, "orchestrator": name, "raw": proc.stdout.strip()}
+        return {"ok": True, "orchestrator": name, "team": team,
+                "raw": proc.stdout.strip()}
 
 
-def _registry_names() -> List[str]:
-    """Orchestrator names from the manager team's runtime registry."""
-    reg = state_dir() / "workers-runtime.env"
+def _registry_names(team: Optional[str] = None) -> List[str]:
+    """Orchestrator names from a team's runtime registry."""
+    reg = state_dir(team) / "workers-runtime.env"
     if not reg.is_file():
         return []
     names: Dict[str, str] = {}
@@ -477,63 +503,88 @@ def _registry_names() -> List[str]:
     return sorted(set(names.values()))
 
 
+def _all_employees() -> List[tuple]:
+    """(name, team) for every employee across all known teams. A name can
+    only belong to one team — darkarchon registries key on it — so the first
+    team claiming a name wins if two ever collide."""
+    seen: Dict[str, str] = {}
+    for team in known_teams():
+        for name in _registry_names(team):
+            seen.setdefault(name, team)
+    return sorted(seen.items())
+
+
+def _team_of(name: str) -> Optional[str]:
+    """The team an employee is registered in, searched across all of them."""
+    for n, team in _all_employees():
+        if n == name:
+            return team
+    return None
+
+
 def _resolve_name(query: str):
-    """Resolve an employee name, accepting a unique prefix ('inf' →
-    'influencer-specialist'). Returns (name, []) on success, (None,
-    candidates) when ambiguous, (None, []) when nothing matches."""
+    """Resolve an employee name across all teams, accepting a unique prefix
+    ('inf' → 'influencer-specialist'). Returns (name, team, []) on success,
+    (None, None, candidates) when ambiguous, (None, None, []) when nothing
+    matches."""
     q = (query or "").strip().lstrip("@")
-    names = _registry_names()
-    if q in names:
-        return q, []
+    pairs = _all_employees()
+    for n, team in pairs:
+        if n == q:
+            return q, team, []
     ql = q.lower()
-    matches = [n for n in names if n.lower().startswith(ql)] if ql else []
+    matches = [(n, t) for n, t in pairs if n.lower().startswith(ql)] if ql else []
     if len(matches) == 1:
-        return matches[0], []
-    return None, sorted(matches)
+        return matches[0][0], matches[0][1], []
+    return None, None, sorted(n for n, _ in matches)
 
 
 def list_orchestrators() -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
-    groups = _load_groups()
     fleet = []
-    for name in _registry_names():
+    for name, team in _all_employees():
         st = status(name)
         fleet.append({
             "name": name,
-            "team": groups.get(name) or None,
+            "team": team,
             "state": st.get("state", "unknown"),
             "detail": st.get("detail", ""),
             "target": st.get("target", f"{name}:{name}"),
         })
-    return {"ok": True, "team": manager_team(), "orchestrators": fleet}
+    return {"ok": True, "team": current_team(), "teams": known_teams(),
+            "orchestrators": fleet}
 
 
 # ── dispatch / result ──────────────────────────────────────────────────────
 
-def _meta_path(run_id: str) -> Path:
-    return runs_dir() / f"{run_id}.json"
+def _meta_path(run_id: str, team: Optional[str] = None) -> Path:
+    return runs_dir(team) / f"{run_id}.json"
 
 
-def _log_path(run_id: str) -> Path:
-    return runs_dir() / f"{run_id}.log"
+def _log_path(run_id: str, team: Optional[str] = None) -> Path:
+    return runs_dir(team) / f"{run_id}.log"
 
 
 def _save_meta(meta: Dict[str, Any]) -> None:
-    p = _meta_path(meta["run_id"])
+    p = _meta_path(meta["run_id"], meta.get("team"))
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     tmp.replace(p)
 
 
 def _load_meta(run_id: str) -> Optional[Dict[str, Any]]:
-    p = _meta_path(run_id)
-    if not p.is_file():
-        return None
-    try:
-        return json.loads(p.read_text())
-    except json.JSONDecodeError:
-        return None
+    """Runs live under their team's state dir; a run_id identifies exactly one
+    run, so look through every team the manager knows."""
+    for team in known_teams() or [current_team()]:
+        p = _meta_path(run_id, team)
+        if not p.is_file():
+            continue
+        try:
+            meta = json.loads(p.read_text())
+        except json.JSONDecodeError:
+            return None
+        meta.setdefault("team", team)  # runs recorded before teams existed
+        return meta
+    return None
 
 
 _EXIT_CODES = {
@@ -549,9 +600,10 @@ _EXIT_CODES = {
 
 
 def _finalize(meta: Dict[str, Any], exit_code: int) -> Dict[str, Any]:
+    log = _log_path(meta["run_id"], meta.get("team"))
     log_text = ""
     try:
-        log_text = _log_path(meta["run_id"]).read_text()
+        log_text = log.read_text()
     except OSError:
         pass
     meta["exit_code"] = exit_code
@@ -564,10 +616,11 @@ def _finalize(meta: Dict[str, Any], exit_code: int) -> Dict[str, Any]:
         "ok": exit_code == 0,
         "run_id": meta["run_id"],
         "orchestrator": meta["orchestrator"],
+        "team": meta.get("team"),
         "status": meta["status"],
         "outcome": _EXIT_CODES.get(exit_code, f"exit code {exit_code}"),
         "result": result[-RESULT_TRUNCATE_CHARS:] if truncated else result,
-        **({"result_truncated": True, "full_log": str(_log_path(meta["run_id"]))}
+        **({"result_truncated": True, "full_log": str(log)}
            if truncated else {}),
     }
 
@@ -581,17 +634,17 @@ def _interrupted() -> bool:
         return False
 
 
-def _slack_notify(text: str) -> None:
+def _slack_notify(text: str, team: Optional[str] = None) -> None:
     """POST a message to the Slack incoming webhook in
     $HERMES_ORCH_SLACK_WEBHOOK. Silently disabled when unset; best-effort
     always — Slack being down must never affect fleet operation.
 
-    Messages are prefixed with the fleet name so several machines can share
-    one notification channel and still be told apart."""
+    Messages are prefixed with the team name so several teams (and machines)
+    can share one notification channel and still be told apart."""
     url = os.environ.get("HERMES_ORCH_SLACK_WEBHOOK", "").strip()
     if not url:
         return
-    team = manager_team()
+    team = team or current_team()
     if team:
         text = f"[{team}] {text}"
     try:
@@ -641,7 +694,8 @@ def _origin_session_key() -> Optional[str]:
 
 def _notify(message: str, slack_text: Optional[str] = None,
             session_id: Optional[str] = None,
-            session_key: Optional[str] = None) -> None:
+            session_key: Optional[str] = None,
+            team: Optional[str] = None) -> None:
     """Push a message into the hermes conversation (no-op outside hermes)
     and, when slack_text is given, mirror a short form to Slack.
 
@@ -655,7 +709,7 @@ def _notify(message: str, slack_text: Optional[str] = None,
     then goes untargeted, and the Slack mirror above has already gone out
     either way."""
     if slack_text:
-        _slack_notify(slack_text)
+        _slack_notify(slack_text, team)
     if _CTX is None:
         return
     try:
@@ -704,6 +758,7 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
                         f"is stuck past every timeout cap — check its tmux session."),
             session_id=origin,
             session_key=origin_key,
+            team=meta.get("team"),
         )
         return
 
@@ -724,20 +779,19 @@ def _watch_and_notify(run_id: str, proc: subprocess.Popen) -> None:
                     f"{result_preview[:300]}"),
         session_id=origin,
         session_key=origin_key,
+        team=meta.get("team"),
     )
 
 
 def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name.lstrip("@")):
         return _err(f"invalid orchestrator name '{name}'")
-    resolved, cands = _resolve_name(name)
+    resolved, team, cands = _resolve_name(name)
     if resolved is None:
         if cands:
             return _err(f"ambiguous employee '{name}' — matches: "
                         f"{', '.join(cands)}. Be more specific.")
-        roster = ", ".join(_registry_names()) or "(no employees hired)"
+        roster = ", ".join(n for n, _ in _all_employees()) or "(no employees hired)"
         return _err(f"unknown employee '{name}'. Roster: {roster}")
     name = resolved
     if not task or not task.strip():
@@ -745,9 +799,9 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     wait_seconds = max(0, min(int(wait_seconds or 0), DISPATCH_WAIT_CAP_SECONDS))
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
-    log_file = open(_log_path(run_id), "w")
+    log_file = open(_log_path(run_id, team), "w")
     script = darkarchon_home() / "dispatch-safe.sh"
-    env = _env()
+    env = _env(team=team)
     env.setdefault("TASK_MAX_SECONDS", FLEET_TASK_MAX_SECONDS)
     proc = subprocess.Popen(
         [str(script), name, "-"],
@@ -763,11 +817,12 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
     meta = {
         "run_id": run_id,
         "orchestrator": name,
+        "team": team,
         "pid": proc.pid,
         "task_preview": task[:300],
         "status": "running",
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "log": str(_log_path(run_id)),
+        "log": str(_log_path(run_id, team)),
         # Captured here, on the turn thread — the completion report must go
         # back to the dashboard session that asked for this dispatch.
         "origin_session": _origin_session_id(),
@@ -794,6 +849,7 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
         "ok": True,
         "run_id": run_id,
         "orchestrator": name,
+        "team": team,
         "status": "running",
         "note": (
             f"Still running after {wait_seconds}s wait. A completion report "
@@ -805,8 +861,6 @@ def dispatch(name: str, task: str, wait_seconds: int = 120) -> Dict[str, Any]:
 
 
 def result(run_id: str) -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     meta = _load_meta(run_id)
     if meta is None:
         return _err(f"unknown run_id '{run_id}'")
@@ -830,7 +884,7 @@ def result(run_id: str) -> Dict[str, Any]:
 
     log_text = ""
     try:
-        log_text = _log_path(run_id).read_text()
+        log_text = _log_path(run_id, meta.get("team")).read_text()
     except OSError:
         pass
 
@@ -839,6 +893,7 @@ def result(run_id: str) -> Dict[str, Any]:
             "ok": True,
             "run_id": run_id,
             "orchestrator": meta["orchestrator"],
+            "team": meta.get("team"),
             "status": "running",
             "log_tail": log_text[-LOG_TAIL_CHARS:],
         }
@@ -850,17 +905,21 @@ def result(run_id: str) -> Dict[str, Any]:
 
 
 def runs(limit: int = 10) -> Dict[str, Any]:
-    if manager_team() is None:
-        return _err(_NO_TEAM)
+    """Recent runs across every team (run ids are timestamp-prefixed, so
+    sorting the merged list by name is chronological)."""
+    files = []
+    for team in known_teams():
+        files += [(p.name, team, p) for p in runs_dir(team).glob("*.json")]
     metas = []
-    for p in sorted(runs_dir().glob("*.json"), reverse=True)[: max(1, limit)]:
+    for _, team, p in sorted(files, reverse=True)[: max(1, limit)]:
         try:
             m = json.loads(p.read_text())
         except (OSError, json.JSONDecodeError):
             continue
+        m.setdefault("team", team)
         metas.append({k: m.get(k) for k in
-                      ("run_id", "orchestrator", "status", "started_at",
-                       "finished_at", "task_preview")})
+                      ("run_id", "orchestrator", "team", "status",
+                       "started_at", "finished_at", "task_preview")})
     return {"ok": True, "runs": metas}
 
 
@@ -873,29 +932,38 @@ def invite(name: str, target: str, team: str = "") -> Dict[str, Any]:
     """Register an already-running Claude session (tmux session:window) as an
     employee, without spawning anything. Marked EXTERNAL — hermess can
     dispatch to it but never kills it; remove with uninvite."""
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid employee name '{name}'")
     team = (team or "").strip()
-    if team and not NAME_RE.match(team):
-        return _err(f"invalid team label '{team}' (use [a-zA-Z0-9_-])")
+    if not team:
+        return _err(_ask_team("invite"))
+    if not NAME_RE.match(team):
+        return _err(f"invalid team name '{team}' (use [a-zA-Z0-9_-])")
+    other = _team_of(name)
+    if other and other != team:
+        return _err(
+            f"'{name}' is already registered in team '{other}'. Employee "
+            f"names are unique across teams — uninvite it first, or use a "
+            f"different name."
+        )
     target = (target or "").strip()
     if not TARGET_RE.match(target):
         return _err(f"invalid target '{target}' (expected session:window)")
     script = darkarchon_home() / "invite-worker.sh"
-    proc = _run([str(script), name, target, "orchestrator"], timeout=30)
+    proc = _run([str(script), name, target, "orchestrator"], timeout=30,
+                team=team)
     if proc.returncode != 0:
         return _err("invite failed", detail=(proc.stderr or proc.stdout).strip())
-    _set_group(name, team)
+    remember_team(team)
     return {
         "ok": True,
         "orchestrator": name,
-        "team": team or None,
+        "team": team,
         "tmux_target": target,
         "external": True,
         "note": (
-            "Adopted the existing session as an employee. Caveats: its state "
+            f"Adopted the existing session as an employee of team '{team}' "
+            f"(~/.darkarchon/{team}/). Caveats: its state "
             "is detected by screen-scraping (it has no hook wiring), it did "
             "not receive the orchestrator contract prompt, and its own "
             "sub-team namespace is whatever its environment already uses. "
@@ -907,16 +975,18 @@ def invite(name: str, target: str, team: str = "") -> Dict[str, Any]:
 def uninvite(name: str) -> Dict[str, Any]:
     """Drop an invited (external) employee from the registry. The session
     itself is untouched — it belongs to the user."""
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     if not name or not NAME_RE.match(name):
         return _err(f"invalid employee name '{name}'")
+    team = _team_of(name)
+    if team is None:
+        return _err(f"unknown employee '{name}' in any team "
+                    f"({', '.join(known_teams()) or 'none'})")
     script = darkarchon_home() / "uninvite-worker.sh"
-    proc = _run([str(script), name], timeout=30)
+    proc = _run([str(script), name], timeout=30, team=team)
     if proc.returncode != 0:
         return _err("uninvite failed", detail=(proc.stderr or proc.stdout).strip())
-    _set_group(name, "")
-    return {"ok": True, "orchestrator": name, "message": proc.stdout.strip()}
+    return {"ok": True, "orchestrator": name, "team": team,
+            "message": proc.stdout.strip()}
 
 
 # ── fleet-level questions (orchestrator → manager escalation) ──────────────
@@ -933,10 +1003,10 @@ _QWATCH_SEEN: set = set()  # cheap in-process short-circuit over the markers
 QUESTION_POLL_SECONDS = 15
 
 
-def _claim_once(kind: str, key: str) -> bool:
+def _claim_once(kind: str, key: str, team: Optional[str] = None) -> bool:
     """Atomically claim the right to send one notification. First claimer
     across ALL processes wins; markers persist so restarts don't re-notify."""
-    d = state_dir() / f"notified-{kind}"
+    d = state_dir(team) / f"notified-{kind}"
     key = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)[:120]
     try:
         d.mkdir(parents=True, exist_ok=True)
@@ -949,8 +1019,8 @@ def _claim_once(kind: str, key: str) -> bool:
         return False  # cannot prove we're first — better silent than twice
 
 
-def _claim_question_notification(qid: str) -> bool:
-    return _claim_once("questions", qid)
+def _claim_question_notification(qid: str, team: Optional[str] = None) -> bool:
+    return _claim_once("questions", qid, team)
 
 
 # ── direct-work notifications ───────────────────────────────────────────────
@@ -971,7 +1041,8 @@ def _direct_notify_enabled() -> bool:
         not in ("0", "false", "no", "off")
 
 
-def _dispatch_recently_active(name: str, within_seconds: int = 180) -> bool:
+def _dispatch_recently_active(name: str, within_seconds: int = 180,
+                              team: Optional[str] = None) -> bool:
     """True when a dispatch run for `name` is running or JUST finished.
 
     The run watcher owns notifications for dispatched work; without the
@@ -980,7 +1051,7 @@ def _dispatch_recently_active(name: str, within_seconds: int = 180) -> bool:
     get double-reported."""
     import calendar
     now = time.time()
-    for p in sorted(runs_dir().glob("*.json"), reverse=True)[:20]:
+    for p in sorted(runs_dir(team).glob("*.json"), reverse=True)[:20]:
         try:
             m = json.loads(p.read_text())
         except (OSError, json.JSONDecodeError):
@@ -1005,8 +1076,8 @@ def _check_direct_transitions() -> None:
         return
     min_secs = int(os.environ.get(
         "HERMES_ORCH_DIRECT_NOTIFY_MIN_SECONDS", "60") or 60)
-    for name in _registry_names():
-        f = state_dir() / "states" / f"{_safe_name(name)}.json"
+    for name, team in _all_employees():
+        f = state_dir(team) / "states" / f"{_safe_name(name)}.json"
         try:
             cur = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
@@ -1020,30 +1091,30 @@ def _check_direct_transitions() -> None:
 
         if st == "idle" and prev["state"] in ("busy", "compacting"):
             dur = max(0, ts - int(prev["ts"] or ts))
-            if dur >= min_secs and not _dispatch_recently_active(name) \
-                    and _claim_once("direct", f"{_safe_name(name)}-{ts}"):
+            if dur >= min_secs and not _dispatch_recently_active(name, team=team) \
+                    and _claim_once("direct", f"{_safe_name(name)}-{ts}", team):
                 _slack_notify(
                     f":zzz: *{name}* finished a direct-work turn "
                     f"({dur // 60}m {dur % 60}s) — typed in its pane, "
-                    f"no dispatch attached."
+                    f"no dispatch attached.", team
                 )
         elif st in ("awaiting_user", "awaiting_permission"):
             # A permission prompt / question stalls the pane whether the work
             # was dispatched or typed — always worth a ping.
             detail = (cur.get("detail") or "").strip()
-            if _claim_once("direct", f"{_safe_name(name)}-await-{ts}"):
+            if _claim_once("direct", f"{_safe_name(name)}-await-{ts}", team):
                 _slack_notify(
                     f":keyboard: *{name}* is waiting for your input"
                     + (f": {detail[:150]}" if detail else "")
-                    + f" — attach: tmux attach -t {name}"
+                    + f" — attach: tmux attach -t {name}", team
                 )
 
 
 def _questions_watcher() -> None:
     while True:
         try:
-            if manager_team() is not None:
-                qdir = state_dir() / "questions"
+            for team in known_teams():
+                qdir = state_dir(team) / "questions"
                 files = sorted(qdir.glob("*.json")) if qdir.is_dir() else []
                 for p in files:
                     try:
@@ -1054,20 +1125,21 @@ def _questions_watcher() -> None:
                     if q.get("status") != "pending" or qid in _QWATCH_SEEN:
                         continue
                     _QWATCH_SEEN.add(qid)
-                    if not _claim_question_notification(qid):
+                    if not _claim_question_notification(qid, team):
                         continue  # another hermes process already notified it
                     body = (q.get("body") or "").strip()
                     frm = q.get("from_worker", "?")
                     _notify(
-                        f"[fleet-notification] Employee '{frm}' escalated a "
-                        f"question that needs a HUMAN decision "
-                        f"(id {qid}):\n{body[:500]}\n\n"
+                        f"[fleet-notification] Employee '{frm}' (team "
+                        f"'{team}') escalated a question that needs a HUMAN "
+                        f"decision (id {qid}):\n{body[:500]}\n\n"
                         f"Relay it to the user now, in their language. Never "
                         f"answer it yourself — when the user decides, send it "
                         f"back with orchestrator(action='answer', "
                         f"question_id='{qid}', answer=<their decision>).",
                         slack_text=(f":question: *{frm}* needs your decision "
                                     f"(id {qid}):\n{body[:300]}"),
+                        team=team,
                     )
         except Exception:
             pass  # the watcher must survive anything
@@ -1090,43 +1162,52 @@ def _ensure_question_watcher() -> None:
 def questions() -> Dict[str, Any]:
     """Pending questions orchestrators filed via ask (they have no other
     push channel up to the manager — surface these to the user)."""
-    if manager_team() is None:
-        return _err(_NO_TEAM)
-    qdir = state_dir() / "questions"
     pending = []
-    for p in sorted(qdir.glob("*.json")):
-        try:
-            q = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        if q.get("status") == "pending":
-            pending.append({k: q.get(k) for k in
-                            ("question_id", "from_worker", "body", "created_at")})
-    return {"ok": True, "team": manager_team(), "questions": pending}
+    for team in known_teams():
+        qdir = state_dir(team) / "questions"
+        for p in (sorted(qdir.glob("*.json")) if qdir.is_dir() else []):
+            try:
+                q = json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if q.get("status") == "pending":
+                item = {k: q.get(k) for k in
+                        ("question_id", "from_worker", "body", "created_at")}
+                item["team"] = team
+                pending.append(item)
+    return {"ok": True, "team": current_team(), "questions": pending}
+
+
+def _team_of_question(question_id: str) -> Optional[str]:
+    for team in known_teams():
+        if (state_dir(team) / "questions" / f"{question_id}.json").is_file():
+            return team
+    return None
 
 
 def answer(question_id: str, text: str) -> Dict[str, Any]:
     """Answer a pending question — delivered to the asking orchestrator's
     mailbox (it drains on its next MAILBOX_NOTIFY / dispatch turn)."""
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     question_id = (question_id or "").strip()
     if not question_id or "/" in question_id or ".." in question_id:
         return _err(f"invalid question_id '{question_id}'")
     if not text or not text.strip():
         return _err("answer text must be non-empty")
+    team = _team_of_question(question_id)
+    if team is None:
+        return _err(f"unknown question_id '{question_id}' in any team "
+                    f"({', '.join(known_teams()) or 'none'})")
     script = darkarchon_home() / "questions.sh"
-    proc = _run([str(script), "answer", question_id, text], timeout=30)
+    proc = _run([str(script), "answer", question_id, text], timeout=30,
+                team=team)
     if proc.returncode != 0:
         return _err("answer failed", detail=(proc.stderr or proc.stdout).strip())
-    return {"ok": True, "question_id": question_id,
+    return {"ok": True, "question_id": question_id, "team": team,
             "message": proc.stdout.strip()}
 
 
 def interrupt(run_id: str) -> Dict[str, Any]:
     """Stop the dispatch poller for a run (the orchestrator itself keeps going)."""
-    if manager_team() is None:
-        return _err(_NO_TEAM)
     meta = _load_meta(run_id)
     if meta is None:
         return _err(f"unknown run_id '{run_id}'")
