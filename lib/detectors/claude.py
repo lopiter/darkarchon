@@ -55,6 +55,9 @@ TITLE_BUSY_PATTERN = re.compile(r"^[⠀-⣿]\s")
 # this generic, the line above it is the useful one.
 GENERIC_DIALOG_QUESTION = re.compile(r"^Do you want to proceed\??$")
 DIM_ESCAPE = re.compile(r"\x1b\[(2|0;2)m")
+# A session started with `claude -n <name>` draws its name into the rule above
+# the prompt: "──────── cto-voc-a ─". It is still that rule.
+LABELED_RULE = re.compile(r"^─{3,}\s+\S.*\s─+$")
 
 
 def strip_ansi(text: str) -> str:
@@ -90,7 +93,7 @@ def classify_claude_state(capture_plain: str, capture_with_ansi: str, pane_title
     if prompt_idx is not None:
         for i in range(prompt_idx - 1, -1, -1):
             stripped = lines[i].strip()
-            if stripped and set(stripped) <= {"─", "-", " "} and "─" in stripped:
+            if (stripped and set(stripped) <= {"─", "-", " "} and "─" in stripped) or LABELED_RULE.match(stripped):
                 sep_idx = i
                 break
 

@@ -110,6 +110,33 @@ def test_busy_when_notice_lines_sit_between_spinner_and_prompt(load_fixture):
     assert "Kneading" in result["detail"]
 
 
+# Real capture (2026-09-30): a session started with `claude -n <name>` draws
+# the name into the rule above the prompt ("──── cto-probe ─"). The detector
+# only accepted a rule made purely of "─", found no separator, fell back to the
+# last three lines (prompt + status bar) and reported a working orchestrator
+# as idle for its whole run.
+
+def test_busy_when_rule_above_prompt_carries_session_name(load_fixture):
+    plain = load_fixture("claude_busy_named_session.txt")
+    result = classify_claude_state(plain, plain)
+    assert result["state"] == "busy"
+    assert "Vibing" in result["detail"]
+
+
+def test_idle_when_rule_above_prompt_carries_session_name():
+    plain = (
+        "⏺ done\n"
+        "\n"
+        "✻ Sautéed for 46s · done 6:19 PM\n"
+        "\n"
+        + "─" * 60 + " cto-probe ─\n"
+        "❯ \n"
+        + "─" * 72 + "\n"
+    )
+    result = classify_claude_state(plain, plain)
+    assert result["state"] == "idle"
+
+
 # ── permission dialogs are not idle ──────────────────────────────────────────
 # Real capture (2026-08-09): a worker blocked on a tool-approval dialog. The
 # dialog replaces the input prompt, and its menu row starts with the same "❯"
