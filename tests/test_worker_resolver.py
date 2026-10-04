@@ -284,3 +284,139 @@ def test_resolved_worker_carries_its_state_dir():
                 "window_name": "w", "state": "idle", "detail": ""}]
 
     assert resolve_workers(scanned, registry)[0]["state_dir"] == "/s/small-star"
+
+
+def test_two_panes_do_not_share_one_registry_row_via_later_fallback():
+    """A named pane claims 3hour:3hour. A renamed sibling with the same
+    cwd must not also become '3hour'."""
+    registry = parse_registry_text(
+        "WORKER_orch_NAME=3hour\n"
+        "WORKER_orch_TARGET=3hour:3hour\n"
+        "WORKER_orch_DIR=/work/3hour/basecamp\n"
+        "WORKER_orch_ROLE=orchestrator\n"
+        "WORKER_ui_NAME=website-ui\n"
+        "WORKER_ui_TARGET=3hour:website-ui\n"
+        "WORKER_ui_DIR=/work/website-ui\n"
+        "WORKER_ui_ROLE=website-ui\n"
+    )
+    scanned = [
+        {
+            "target": "3hour:2.1",
+            "window_name": "website-ui",
+            "cwd": "/work/website-ui",
+            "process": "claude",
+            "pane_pid": "1",
+            "state": "idle",
+            "detail": "",
+        },
+        {
+            "target": "3hour:1.1",
+            "window_name": "2.1.239",
+            "cwd": "/work/3hour/basecamp",
+            "process": "claude",
+            "pane_pid": "2",
+            "state": "idle",
+            "detail": "",
+        },
+    ]
+    workers = resolve_workers(scanned, registry)
+    names = [w["name"] for w in workers]
+    assert names.count("3hour") == 1
+    assert "website-ui" in names
+
+
+def test_renamed_window_matches_unique_session_and_cwd():
+    """Claude overwrote the window name with its version string. Registry
+    still has TARGET=3hour:3hour and DIR=the pane cwd. No WINDOW_ID."""
+    registry = parse_registry_text(
+        "WORKER_3hour_NAME=3hour\n"
+        "WORKER_3hour_TARGET=3hour:3hour\n"
+        "WORKER_3hour_DIR=/work/3hour/basecamp\n"
+        "WORKER_3hour_ROLE=orchestrator\n"
+        "WORKER_3hour_SESSION=3hour\n"
+    )
+    scanned = [
+        {
+            "target": "3hour:1.1",
+            "window_name": "2.1.239",
+            "window_id": "@0",
+            "cwd": "/work/3hour/basecamp",
+            "process": "claude",
+            "pane_pid": "9",
+            "state": "idle",
+            "detail": "",
+        }
+    ]
+    w = resolve_workers(scanned, registry)[0]
+    assert w["kind"] == "registered"
+    assert w["name"] == "3hour"
+    assert w["role"] == "orchestrator"
+    assert w["session"] == "3hour"
+
+
+def test_ambiguous_session_cwd_stays_discovered():
+    """Two unused registry rows, same session and cwd (e.g. both windows
+    renamed). Do not pick a winner."""
+    registry = parse_registry_text(
+        "WORKER_a_NAME=dev\n"
+        "WORKER_a_TARGET=team:dev\n"
+        "WORKER_a_DIR=/work/app\n"
+        "WORKER_b_NAME=reviewer\n"
+        "WORKER_b_TARGET=team:reviewer\n"
+        "WORKER_b_DIR=/work/app\n"
+    )
+    scanned = [
+        {
+            "target": "team:1.1",
+            "window_name": "2.1.239",
+            "cwd": "/work/app",
+            "process": "claude",
+            "pane_pid": "1",
+            "state": "idle",
+            "detail": "",
+        },
+        {
+            "target": "team:2.1",
+            "window_name": "2.1.240",
+            "cwd": "/work/app",
+            "process": "codex",
+            "pane_pid": "2",
+            "state": "idle",
+            "detail": "",
+        },
+    ]
+    workers = resolve_workers(scanned, registry)
+    assert all(w["kind"] == "discovered" for w in workers)
+
+
+def test_staff_window_name_wins_before_cwd_fallback():
+    registry = parse_registry_text(
+        "WORKER_3hour_NAME=3hour\n"
+        "WORKER_3hour_TARGET=3hour:3hour\n"
+        "WORKER_3hour_DIR=/work/3hour/basecamp\n"
+        "WORKER_3hour_ROLE=orchestrator\n"
+        "WORKER_ui_NAME=website-ui\n"
+        "WORKER_ui_TARGET=3hour:website-ui\n"
+        "WORKER_ui_DIR=/work/website-ui\n"
+        "WORKER_ui_ROLE=website-ui\n"
+        "WORKER_api_NAME=homepage-backend\n"
+        "WORKER_api_TARGET=3hour:homepage-backend\n"
+        "WORKER_api_DIR=/work/homepage-backend\n"
+        "WORKER_api_ROLE=homepage-backend\n"
+    )
+    scanned = [
+        {"target": "3hour:1.1", "window_name": "2.1.239",
+         "cwd": "/work/3hour/basecamp", "process": "claude",
+         "pane_pid": "1", "state": "idle", "detail": ""},
+        {"target": "3hour:2.1", "window_name": "website-ui",
+         "cwd": "/work/website-ui", "process": "claude",
+         "pane_pid": "2", "state": "idle", "detail": ""},
+        {"target": "3hour:3.1", "window_name": "homepage-backend",
+         "cwd": "/work/homepage-backend", "process": "claude",
+         "pane_pid": "3", "state": "idle", "detail": ""},
+    ]
+    by_name = {w["name"]: w for w in resolve_workers(scanned, registry)}
+    assert by_name["3hour"]["role"] == "orchestrator"
+    assert by_name["3hour"]["kind"] == "registered"
+    assert by_name["website-ui"]["kind"] == "registered"
+    assert by_name["homepage-backend"]["kind"] == "registered"
