@@ -157,16 +157,62 @@ def _window_id_match(p: dict, registry: dict) -> dict | None:
     return meta
 
 
+def _unique_metas(registry: dict):
+    """Registry is keyed by TARGET and WINDOW_ID; values repeat."""
+    seen = set()
+    out = []
+    for meta in registry.values():
+        t = meta.get("target")
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(meta)
+    return out
+
+
+def _session_cwd_match(p: dict, registry: dict, used_targets: set) -> dict | None:
+    session = (p.get("target") or "").split(":", 1)[0]
+    cwd = p.get("cwd") or ""
+    if not session or not cwd:
+        return None
+    hits = []
+    for meta in _unique_metas(registry):
+        t = meta.get("target") or ""
+        if t in used_targets:
+            continue
+        if t.split(":", 1)[0] != session:
+            continue
+        if (meta.get("cwd") or "") != cwd:
+            continue
+        hits.append(meta)
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
 def resolve_workers(scanned: list[dict], registry: dict) -> list[dict]:
     """Annotate scanned pane dicts with name/role/kind from registry."""
     out: list[dict] = []
+    used_targets: set[str] = set()
     for p in scanned:
         meta = _window_id_match(p, registry)
+        matched_key = p.get("window_id", "") if meta is not None else ""
+        if meta is not None and (meta.get("target") or matched_key) in used_targets:
+            meta, matched_key = None, ""
         for key in _candidate_keys(p):
             if meta:
                 break
-            meta = registry.get(key)
+            cand = registry.get(key)
+            if cand is None:
+                continue
+            if (cand.get("target") or key) in used_targets:
+                continue
+            meta, matched_key = cand, key
+        if not meta:
+            meta = _session_cwd_match(p, registry, used_targets)
+            matched_key = meta.get("target", "") if meta else ""
         if meta:
+            used_targets.add(meta.get("target") or matched_key)
             out.append(
                 {
                     **p,
