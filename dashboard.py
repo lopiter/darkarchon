@@ -22,10 +22,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # allow `from lib.xxx import ...`
 
 from lib.hub_store import HostStateStore  # noqa: E402
-from lib.orch_markers import marker_team_for, read_markers  # noqa: E402
+from lib.orch_markers import marker_team_for, orch_team_for, read_markers  # noqa: E402
 from lib.sse import SseBroker  # noqa: E402
 from lib.task_store import TaskStore  # noqa: E402
 from lib.team_index import classify, discover_teams, iso_to_epoch  # noqa: E402
+from lib.tmux_scanner import server_start_time  # noqa: E402
 from lib.worker_resolver import parse_registry_file  # noqa: E402
 
 # Cache TaskStore instances by db path — sqlite connections are short-lived
@@ -622,6 +623,7 @@ def _orchestrator_team_index(
     known_teams = _team_names(state_dirs)
     if from_marker is None:
         from_marker, _by_wid = read_markers(state_dirs)
+    newest_at: dict[str, str] = {}
     for state_dir, team_name in state_dirs:
         db_path = state_dir / "tasks.db"
         if not db_path.exists():
@@ -648,11 +650,31 @@ def _orchestrator_team_index(
             sender_sn = sender.split(":", 1)[0] if ":" in sender else ""
             if not sender_sn or sender_sn == team_sn:
                 continue
-            # dispatch_pairs() yields newest first, so the first team we see for
-            # a sender is where it most recently dispatched. An orchestrator
-            # that moved on to another team is tagged by where it works now.
-            from_dispatch.setdefault(sender, team_sn)
+            # Tag a sender by where it most recently dispatched, compared
+            # across every team dir — not the first dir that mentions it. A
+            # fleet session like cto-orch reuses `cto-orch:1.1` run after run,
+            # and first-dir-wins pinned it to whichever old team sorts first.
+            last_at = d.get("last_at") or ""
+            if sender not in newest_at or last_at > newest_at[sender]:
+                newest_at[sender] = last_at
+                from_dispatch[sender] = team_sn
     return {**from_dispatch, **from_marker}
+
+
+_TMUX_START_TTL_SEC = 60
+_tmux_start_cache: dict[str, float | None] = {}
+
+
+def _local_tmux_start() -> float | None:
+    """The hub machine's tmux server start time, re-read at most once a minute.
+
+    It only changes when the server restarts, but `_collect_status` runs on
+    every poll and a subprocess per poll is not free."""
+    now = time.monotonic()
+    if now - _tmux_start_cache.get("at", float("-inf")) > _TMUX_START_TTL_SEC:
+        _tmux_start_cache["value"] = server_start_time()
+        _tmux_start_cache["at"] = now
+    return _tmux_start_cache["value"]
 
 
 def _collect_status() -> dict:
@@ -664,7 +686,7 @@ def _collect_status() -> dict:
     registered_by_target = _registered_teams_by_target()
     sessions_by_target = _registered_sessions_by_target()
     state_dirs = _all_state_dirs()
-    marker_by_pane, marker_by_wid = read_markers(state_dirs)
+    marker_by_pane, marker_by_wid = read_markers(state_dirs, since=_local_tmux_start())
     orchestrator_team = _orchestrator_team_index(
         registered_by_team, state_dirs, from_marker=marker_by_pane
     )
@@ -682,7 +704,6 @@ def _collect_status() -> dict:
         w["outgoing_dispatches"] = outgoing
 
         default_team = sender_key.split(":", 1)[0] if sender_key else ""
-        forced_team = orchestrator_team.get(sender_key) if sender_key else None
         hub_team_by_session = _team_for_session(default_team)
         # Every signal below is keyed on a tmux identifier, and those are
         # per-tmux-server. For the hub's own panes it resolves them off local
@@ -690,17 +711,31 @@ def _collect_status() -> dict:
         # already resolved against ITS disk and reported (owner_team /
         # marker_team). Agents predating those fields simply report neither,
         # which degrades to session-name grouping rather than to a wrong team.
+        #
+        # orch_team (a window-id marker in the pane's own session, newer than
+        # its tmux server) outranks dispatch history: history is keyed by
+        # `session:window.pane`, which a fleet session such as cto-orch hands
+        # to a new run's window every time. A remote host reports orch_team
+        # only once its agent applies those checks; an older agent's
+        # marker_team stays badge-only. Dispatch history (forced_team) is
+        # read off the hub's disk, so it never applies to a remote pane.
         local = _is_hub_local(w)
         if local:
             registered_team = _lookup_by_target(w, registered_by_target)
+            orch_team = orch_team_for(w, marker_by_wid)
+            forced_team = orchestrator_team.get(sender_key) if sender_key else None
         else:
             registered_team = (w.get("owner_team") or "").strip() or None
-        # team_name priority unchanged: session known-team wins over the
-        # marker, so a pane that invited into team X but lives in session Y
-        # stays grouped under Y.
+            orch_team = (w.get("orch_team") or "").strip()
+            forced_team = None
+        # Session known-team still wins over every marker, so a pane that
+        # invited into team X but lives in session Y stays grouped under Y.
         if hub_team_by_session:
             w["team_name"] = hub_team_by_session
             w["is_orchestrator"] = False
+        elif orch_team:
+            w["team_name"] = orch_team
+            w["is_orchestrator"] = True
         elif forced_team:
             w["team_name"] = forced_team
             w["is_orchestrator"] = True

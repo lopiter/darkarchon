@@ -246,6 +246,17 @@ def capture_pane_title(target: str) -> str:
     return out.strip() if rc == 0 else ""
 
 
+def server_start_time() -> float | None:
+    """Epoch seconds the local tmux server started (#{start_time}), or None.
+
+    Window ids restart at @0 with the server, so anything that recorded an id
+    before this moment names a window that no longer exists.
+    """
+    rc, out = _run_tmux(["tmux", "display-message", "-p", "#{start_time}"])
+    out = out.strip()
+    return float(out) if rc == 0 and out.isdigit() else None
+
+
 def capture_pane_process(target: str) -> str:
     """Read the pane's foreground command (#{pane_current_command}).
 
