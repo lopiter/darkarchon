@@ -31,7 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from lib.tmux_scanner import scan_panes  # noqa: E402
+from lib.tmux_scanner import scan_panes, server_start_time  # noqa: E402
 from lib.worker_resolver import parse_registry_file, resolve_workers  # noqa: E402
 from lib.team_index import build_index, discover_teams  # noqa: E402
 from lib.heartbeat import annotate_workers  # noqa: E402
@@ -133,7 +133,9 @@ def report_once(cfg: AgentConfig) -> int:
     # Team ownership and orchestrator markers live in state dirs only this host
     # can read, and are keyed by tmux ids only this host's server can resolve.
     # Same reason the team index below is built here rather than on the hub.
-    workers = annotate_workers_with_team_facts(workers, teams_with_dirs)
+    workers = annotate_workers_with_team_facts(
+        workers, teams_with_dirs, since=server_start_time()
+    )
     # A host's state dirs are only visible to that host, so the team index has
     # to be built here and carried up rather than read off the hub's own disk —
     # otherwise a remote host's teams have no age at all, and one whose name

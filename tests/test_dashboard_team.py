@@ -1,10 +1,13 @@
 """Team-assignment regression: a worker NAME duplicated across teams (e.g. a
 stale leftover entry) must not hijack the team. Resolution is by tmux TARGET."""
 
+import os
+
 import pytest
 
 from lib.hub_store import HostStateStore
 from lib.orch_markers import parse_marker_line
+from lib.task_store import TaskStore
 
 import dashboard
 from dashboard import _all_state_dirs, _lookup_by_target
@@ -277,7 +280,8 @@ def _pane(target, name, **extra):
 
 
 def _status_workers(hub_at, monkeypatch, *, own="mine", teams=(), markers=None,
-                    registries=None, workers=None, host="h", hub_host="h"):
+                    registries=None, workers=None, host="h", hub_host="h",
+                    tmux_start=None, before=None):
     """Drive Handler._status's collector against a throwaway state root.
 
     `markers` is {team_name: pane_key} written to orchestrator.txt.
@@ -303,9 +307,12 @@ def _status_workers(hub_at, monkeypatch, *, own="mine", teams=(), markers=None,
         d = root / team
         d.mkdir(exist_ok=True)
         (d / "workers-runtime.env").write_text(text)
+    if before:
+        before(root)
     store = HostStateStore(stale_after_seconds=60)
     monkeypatch.setattr(dashboard, "STORE", store)
     monkeypatch.setattr(dashboard, "HUB_HOST_ID", hub_host)
+    monkeypatch.setattr(dashboard, "_local_tmux_start", lambda: tmux_start)
     list(store.update_host(host, workers or []))
     return dashboard._collect_status()["workers"]
 
@@ -713,3 +720,137 @@ def test_local_worker_ignores_reported_fields(hub_at, monkeypatch):
                        window_id="@17", owner_team="wrong-team")],
     )
     assert workers[0]["team_name"] == "voc-1"
+
+
+# ─── cto-orch: one fleet session, one window per run ────────────────────────
+# `bin/cto run start` opens every run's orchestrator as a window of the single
+# tmux session `cto-orch` and points DARKARCHON_TEAM at `cto-<slug>`. Window
+# indices are reused run after run and team dirs outlive their runs, so dozens
+# of teams once dispatched from `cto-orch:1.1`. Only the window-id marker
+# spawn-worker.sh writes says which run the live window is.
+
+def _set_mtime(root, team, mtime):
+    os.utime(root / team / "orchestrator.txt", (mtime, mtime))
+
+
+def _dispatch(root, team, sender, target, worker, at):
+    store = TaskStore(root / team / "tasks.db")
+    store.insert({
+        "id": f"{team}-{worker}-{at}", "worker": worker, "tmux_target": target,
+        "prompt": "p", "dispatched_at": at, "dispatched_by": sender,
+    })
+
+
+def test_run_window_grouped_by_its_window_id_marker(hub_at, monkeypatch):
+    """Production 2026-10-23: cto-orch:1.1 (run insu-group-env) was grouped
+    under cto-category-seo, the alphabetically first team that ever
+    dispatched from that index."""
+    def history(root):
+        _dispatch(root, "cto-category-seo", "cto-orch:1.1",
+                  "cto-category-seo:basecamp", "basecamp", "2026-10-12T01:01:39Z")
+        _set_mtime(root, "cto-category-seo", 1000)
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        teams=("cto-category-seo", "cto-insu-group-env"),
+        markers={"cto-category-seo": "cto-orch:1.1 @20",
+                 "cto-insu-group-env": "cto-orch:1.1 @144"},
+        tmux_start=2000, before=history,
+        workers=[_pane("cto-orch:1.1", "cto-orch:1.1", kind="discovered",
+                       role="", window_name="insu-group-env", window_id="@144")],
+    )
+    assert workers[0]["team_name"] == "cto-insu-group-env"
+    assert workers[0]["is_orchestrator"] is True
+
+
+def test_stale_marker_does_not_regroup_or_badge_unrelated_pane(hub_at, monkeypatch):
+    """Production: `dark:1.1 @2` from before a tmux restart named the
+    insu-terms frontend window, which now holds @2."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=("dark",),
+        markers={"dark": "dark:1.1 @2"},
+        workers=[_pane("insu-terms:2.1", "insu-terms:2.1", kind="discovered",
+                       role="", window_name="frontend", window_id="@2")],
+    )
+    assert workers[0]["team_name"] == "insu-terms"
+    assert workers[0]["is_orchestrator"] is False
+
+
+def test_session_team_still_beats_window_id_marker(hub_at, monkeypatch):
+    """Session-first grouping is unchanged: an orchestrator living in its own
+    team's session that invited into another team stays in its session."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=("dark", "darkarchon"),
+        markers={"darkarchon": "dark:1.1 @7"},
+        workers=[_pane("dark:1.1", "dark:1.1", kind="discovered", role="",
+                       window_id="@7")],
+    )
+    assert workers[0]["team_name"] == "dark"
+    assert workers[0]["is_orchestrator"] is True
+
+
+def test_orchestrator_in_two_teams_groups_under_newest_marker(hub_at, monkeypatch):
+    def ages(root):
+        _set_mtime(root, "team-a", 3000)
+        _set_mtime(root, "team-b", 2500)
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=("team-a", "team-b"),
+        markers={"team-a": "hermes:1.1 @9", "team-b": "hermes:1.1 @9"},
+        before=ages,
+        workers=[_pane("hermes:1.1", "hermes:1.1", kind="discovered", role="",
+                       window_id="@9")],
+    )
+    assert workers[0]["team_name"] == "team-a"
+
+
+def test_dispatch_history_picks_most_recent_team_not_first_dir(hub_at, monkeypatch):
+    def history(root):
+        _dispatch(root, "aaa", "fleet:1.1", "aaa:api", "api", "2026-10-01T00:00:00Z")
+        _dispatch(root, "zzz", "fleet:1.1", "zzz:api", "api", "2026-10-20T00:00:00Z")
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=("aaa", "zzz"), before=history,
+        workers=[_pane("fleet:1.1", "fleet:1.1", kind="discovered", role="")],
+    )
+    assert workers[0]["team_name"] == "zzz"
+    assert workers[0]["is_orchestrator"] is True
+
+
+def test_remote_pane_not_grouped_by_hub_dispatch_history(hub_at, monkeypatch):
+    """Production: second-mac's cto-orch:1.1 picked up the hub's own
+    dispatch history for cto-orch:1.1 — another machine's tmux namespace."""
+    def history(root):
+        _dispatch(root, "cto-category-seo", "cto-orch:1.1",
+                  "cto-category-seo:basecamp", "basecamp", "2026-10-12T01:01:39Z")
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine", teams=("cto-category-seo",),
+        before=history, host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("cto-orch:1.1", "cto-orch:1.1", kind="discovered",
+                       role="", window_id="@70")],
+    )
+    assert workers[0]["team_name"] == "cto-orch"
+    assert workers[0]["is_orchestrator"] is False
+
+
+def test_remote_orch_team_groups_the_run_window(hub_at, monkeypatch):
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("cto-orch:1.1", "cto-orch:1.1", kind="discovered",
+                       role="", window_id="@70", marker_team="cto-voc-b-et-233-demo",
+                       orch_team="cto-voc-b-et-233-demo")],
+    )
+    assert workers[0]["team_name"] == "cto-voc-b-et-233-demo"
+    assert workers[0]["is_orchestrator"] is True
+
+
+def test_old_agent_marker_team_alone_still_only_badges(hub_at, monkeypatch):
+    """An agent predating orch_team reports marker_team without the session
+    and freshness checks; trusting it for grouping could move a pane on a
+    stale marker. It keeps today's meaning: badge only."""
+    workers = _status_workers(
+        hub_at, monkeypatch, own="mine",
+        host="second-mac", hub_host="MacBook-Pro-2",
+        workers=[_pane("cto-orch:2.1", "cto-orch:2.1", kind="discovered",
+                       role="", window_id="@133", marker_team="cto-smallstar-review-demo")],
+    )
+    assert workers[0]["team_name"] == "cto-orch"
+    assert workers[0]["is_orchestrator"] is True
